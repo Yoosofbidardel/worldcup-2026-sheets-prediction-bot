@@ -8,6 +8,7 @@ from config import (
     GOOGLE_SHEET_ID,
     KICKOFF_REFRESH_HOURS,
     REMINDER_CHECK_MINUTES,
+    RESULTS_REFRESH_HOURS,
     TELEGRAM_BOT_TOKEN,
 )
 from sheet import SheetClient
@@ -35,8 +36,16 @@ def main():
             first=5,  # also run shortly after startup
         )
         logging.info("Kickoff sync scheduled every %.1f h.", KICKOFF_REFRESH_HOURS)
+
+        # Auto-fill match results into the sheet after games finish.
+        app.job_queue.run_repeating(
+            bot.refresh_results_job,
+            interval=RESULTS_REFRESH_HOURS * 3600,
+            first=20,
+        )
+        logging.info("Results sync scheduled every %.1f h.", RESULTS_REFRESH_HOURS)
     else:
-        logging.warning("FOOTBALL_API_KEY not set — kickoff deadlines disabled.")
+        logging.warning("FOOTBALL_API_KEY not set — kickoff deadlines & result sync disabled.")
 
     # Nudge users who haven't predicted upcoming matches (needs kickoff times).
     if app.job_queue:

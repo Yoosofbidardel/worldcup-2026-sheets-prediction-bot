@@ -22,15 +22,19 @@ KICKOFF_REFRESH_HOURS = float(os.getenv("KICKOFF_REFRESH_HOURS", "6"))
 # Timezone used only for displaying kickoff times to users (lock logic uses UTC).
 DISPLAY_TZ = os.getenv("DISPLAY_TZ", "UTC")
 
-# If true, predictions can be added/changed at ANY time — matches and specials
-# never lock (kickoff/result are shown for info only). Set to false to restore
-# the original behaviour (lock at kickoff, or when a result is entered).
-PREDICTIONS_ALWAYS_OPEN = os.getenv("PREDICTIONS_ALWAYS_OPEN", "true").strip().lower() in (
+# If true, predictions can be added/changed at ANY time. Default is FALSE so a
+# match LOCKS at kickoff — you can edit your pick freely until the match starts,
+# but never predict a past/started game.
+PREDICTIONS_ALWAYS_OPEN = os.getenv("PREDICTIONS_ALWAYS_OPEN", "false").strip().lower() in (
     "1",
     "true",
     "yes",
     "on",
 )
+
+# How often the background job pulls finished-match results from the API and
+# writes them into the sheet (hours). Needs FOOTBALL_API_KEY.
+RESULTS_REFRESH_HOURS = float(os.getenv("RESULTS_REFRESH_HOURS", "1"))
 
 # ── Sheet layout (1-based row/column numbers) ────────────────────────────
 # Row 1 holds participant names, row 2 holds their =SUM() totals.

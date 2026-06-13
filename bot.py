@@ -125,7 +125,9 @@ GUIDE = (
     "دکمه‌ی «🎯 پیش‌بینی بازی» رو بزن، یه بازی انتخاب کن، با ➖ و ➕ نتیجه رو بچین "
     "و «✅ ذخیره» رو بزن. تمام!\n\n"
     "🔄 *عوض کردنش*\n"
-    "هر وقت خواستی برگرد و پیش‌بینیتو عوض کن، آزادی کامل!\n\n"
+    "تا قبل از شروع بازی هرچقدر خواستی می‌تونی عوضش کنی. ولی بعد از سوت شروع، بازی قفل می‌شه و دیگه نمی‌شه! ⏰🔒\n\n"
+    "🏁 *نتیجه‌ها*\n"
+    "بعد از هر بازی نتیجه‌ش خودکار ثبت می‌شه و امتیازت حساب می‌شه.\n\n"
     "🏆 *پیش‌بینی ویژه*\n"
     "قهرمان، آقای گل و بهترین بازیکن تورنمنت رو هم حدس بزن (امتیازش بیشتره! 🤑).\n\n"
     "📋 *پیش‌بینی‌های من*\n"
@@ -148,7 +150,8 @@ ADMIN_GUIDE = (
     "• «📊 جدول امتیازات» — جدول رو ببین (فقط تو می‌بینیش).\n"
     "• `/slots` و `/assign <idx> <id>` — وصل کردن آدما به اسما.\n"
     "• `/assignments` و `/unassign <id>` — مدیریت اتصال‌ها.\n"
-    "• `/synckickoffs` — گرفتن زمان شروع بازیا از API."
+    "• `/synckickoffs` — گرفتن زمان شروع بازیا از API.\n"
+    "• `/syncresults` — ثبت نتیجه‌ی بازی‌های تموم‌شده (خودکارم انجام می‌شه)."
 )
 
 
@@ -182,12 +185,12 @@ def _stepper_kb(row, home_name, away_name, home, away):
         [
             [
                 InlineKeyboardButton("➖", callback_data=cb("hm")),
-                InlineKeyboardButton(f"{_team(home_name)}:  {home}", callback_data=cb("noop")),
+                InlineKeyboardButton(f"{_team(home_name)}:  {_fa_num(home)}", callback_data=cb("noop")),
                 InlineKeyboardButton("➕", callback_data=cb("hp")),
             ],
             [
                 InlineKeyboardButton("➖", callback_data=cb("am")),
-                InlineKeyboardButton(f"{_team(away_name)}:  {away}", callback_data=cb("noop")),
+                InlineKeyboardButton(f"{_team(away_name)}:  {_fa_num(away)}", callback_data=cb("noop")),
                 InlineKeyboardButton("➕", callback_data=cb("ap")),
             ],
             [
@@ -229,7 +232,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🏆 پیش‌بینی ویژه – قهرمان / آقای گل / ستاره‌ی تورنمنت\n"
             "📋 پیش‌بینی‌های من – ببین چی زدی (شاید خجالت بکشی 😅)\n"
             "📅 برنامه بازی‌ها – بازی‌ها و نتایج\n\n"
-            "✨ هر وقت خواستی می‌تونی پیش‌بینیتو عوض کنی، آزادی کامل! 🔄"
+            "✨ تا قبل از شروع هر بازی می‌تونی پیش‌بینیتو عوض کنی! بعد از سوت شروع قفل می‌شه ⏰🔒"
         )
     else:
         msg = (
@@ -268,28 +271,68 @@ async def cmd_whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── Predicting matches ───────────────────────────────────────────────────
+PAGE_SIZE = 4  # open matches shown per page in /predict
+
+
+def _sorted_open(matches):
+    """Open matches in chronological order (soonest kickoff first)."""
+    far = datetime.max.replace(tzinfo=timezone.utc)
+    return sorted(matches, key=lambda m: (m["kickoff"] or far, m["row"]))
+
+
+def _predict_page(matches, page):
+    """Build the (text, keyboard) for one page of the open-match list."""
+    pages = max(1, (len(matches) + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(0, min(page, pages - 1))
+    chunk = matches[page * PAGE_SIZE : page * PAGE_SIZE + PAGE_SIZE]
+    rows = []
+    for m in chunk:
+        label = f"{_team(m['home'])} 🆚 {_team(m['away'])}"
+        if m["kickoff"]:
+            label += f"  ⏰{_fmt_kickoff(m['kickoff'])}"
+        rows.append([InlineKeyboardButton(label, callback_data=f"pick:{m['row']}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️ قبلی", callback_data=f"ppage:{page - 1}"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton("بعدی ➡️", callback_data=f"ppage:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    text = (
+        f"🎯 یه بازی انتخاب کن (صفحه‌ی {_fa_num(page + 1)} از {_fa_num(pages)}) — "
+        "تا قبل از سوت شروع قابل تغییره ⏰:"
+    )
+    return text, InlineKeyboardMarkup(rows)
+
+
 async def cmd_predict(update: Update, context: ContextTypes.DEFAULT_TYPE):
     a = store.get_assignment(update.effective_user.id)
     if not a:
         await _say(update, _NOT_LINKED)
         return
-    matches = await _run(_sheet(context).open_matches)
+    matches = _sorted_open(await _run(_sheet(context).open_matches))
     if not matches:
         await _say(update, "🎉 الان هیچ بازی‌ای برای پیش‌بینی نیست. یه چایی بخور و استراحت کن ☕️😌")
         return
     for m in matches:
         _remember_names(context, m["row"], m["home"], m["away"])
-    buttons = []
+    text, kb = _predict_page(matches, 0)
+    await _say(update, text, reply_markup=kb)
+
+
+async def predict_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Flip to another page of the open-match list (edits the same message)."""
+    query = update.callback_query
+    await query.answer()
+    page = int(query.data.split(":")[1])
+    matches = _sorted_open(await _run(_sheet(context).open_matches))
+    if not matches:
+        await _edit(query, "🎉 الان هیچ بازی‌ای برای پیش‌بینی نیست.")
+        return
     for m in matches:
-        label = f"{_team(m['home'])} 🆚 {_team(m['away'])}"
-        if m["kickoff"]:
-            label += f"  ⏰{_fmt_kickoff(m['kickoff'])}"
-        buttons.append([InlineKeyboardButton(label, callback_data=f"pick:{m['row']}")])
-    await _say(
-        update,
-        "🎯 یه بازی انتخاب کن و پیش‌بینیتو بکن (هر وقت خواستی می‌تونی عوضش کنی 🔄):",
-        reply_markup=InlineKeyboardMarkup(buttons),
-    )
+        _remember_names(context, m["row"], m["home"], m["away"])
+    text, kb = _predict_page(matches, page)
+    await _edit(query, text, reply_markup=kb)
 
 
 async def cmd_special(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -331,7 +374,7 @@ async def open_stepper(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _edit(
         query,
         f"⚽️ *{_team(match['home'])}* 🆚 *{_team(match['away'])}*\n"
-        f"👇 نتیجه رو بچین و ذخیره کن (هر وقت خواستی عوضش کن 🔄){when}",
+        f"👇 نتیجه رو بچین و ذخیره کن (تا قبل از سوت شروع قابل تغییره 🔄){when}",
         reply_markup=_stepper_kb(row, match["home"], match["away"], home, away),
     )
 
@@ -383,7 +426,7 @@ async def stepper_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("ذخیره شد ✅🔥")
     await _edit(
         query,
-        f"✅ ثبت شد: {_team(home_name)} *{_iso(f'{home}-{away}')}* {_team(away_name)} 🎯\n"
+        f"✅ ثبت شد: {_team(home_name)} *{_iso(_fa_num(f'{home}-{away}'))}* {_team(away_name)} 🎯\n"
         "به امید درست از آب دراومدن! 🤞",
     )
 
@@ -427,9 +470,9 @@ async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
             h, aw = preds["matches"][row]
             res = ""
             if m["actual_home"] is not None:
-                actual = _iso(f"{m['actual_home']}-{m['actual_away']}")
+                actual = _iso(_fa_num(f"{m['actual_home']}-{m['actual_away']}"))
                 res = f"  (نتیجه‌ی واقعی: {actual})"
-            score = _iso(f"{h}-{aw}")
+            score = _iso(_fa_num(f"{h}-{aw}"))
             lines.append(f"⚽️ {_team(m['home'])} {score} {_team(m['away'])}{res}")
     else:
         lines.append("• هنوز هیچ بازی‌ای پیش‌بینی نکردی! 😴 برو پیش‌بینی کن تنبل‌خان 😏")
@@ -464,7 +507,7 @@ async def cmd_matches(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["📅⚽️ *برنامه‌ی بازی‌ها*\n"]
     for m in matches:
         if m["actual_home"] is not None:
-            score = _iso(f"{m['actual_home']}-{m['actual_away']}")
+            score = _iso(_fa_num(f"{m['actual_home']}-{m['actual_away']}"))
             lines.append(f"✅ {_team(m['home'])} *{score}* {_team(m['away'])}")
         elif m["open"]:
             when = f"  ⏰{_fmt_kickoff(m['kickoff'])}" if m["kickoff"] else ""
@@ -559,7 +602,26 @@ async def cmd_assign(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     store.set_assignment(target, slot["name"], slot["col"])
-    await _say(update, f"✅🔗 آیدی {_iso(target)} به *{slot['name']}* وصل شد! خوش اومدی به جمع 🎉")
+    # Tell the newly linked person they're in (only works if they've /start-ed the bot).
+    notified = True
+    try:
+        await context.bot.send_message(
+            chat_id=target,
+            text=_rtl(
+                f"🎉🎊 تبریک *{slot['name']}*! ادمین تو رو به بازیِ پیش‌بینی جام جهانی ۲۰۲۶ اضافه کرد! ⚽️🔥\n\n"
+                "از الان می‌تونی پیش‌بینی کنی 😍\n"
+                "👇 دکمه‌ی «🎯 پیش‌بینی بازی» رو بزن، یا «❓ راهنما» رو برای آموزش."
+            ),
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=_main_kb(_is_admin(target)),
+        )
+    except Exception as e:
+        notified = False
+        logging.warning("Assign notify to %s failed: %s", target, e)
+    msg = f"✅🔗 آیدی {_iso(target)} به *{slot['name']}* وصل شد! خوش اومدی به جمع 🎉"
+    if not notified:
+        msg += "\n⚠️ ولی نتونستم بهش خبر بدم — باید اول خودش ربات رو /start کنه، بعد دوباره assign کن (یا بهش بگو استارت کنه)."
+    await _say(update, msg)
 
 
 async def cmd_unassign(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -658,6 +720,34 @@ async def cmd_synckickoffs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"زمان شروعشونو دستی تو ستون *BV* شیت بذار:\n{shown}"
         )
     await _say(update, msg)
+
+
+# ── Results sync (API → sheet, after matches finish) ─────────────────────
+async def _sync_results(context) -> dict:
+    results = await asyncio.to_thread(api_client.fetch_results)
+    if not results:
+        return {"written": 0, "scored": []}
+    return await asyncio.to_thread(_sheet(context).sync_results, results)
+
+
+async def refresh_results_job(context: ContextTypes.DEFAULT_TYPE):
+    """Periodic background pull of finished-match results into the sheet."""
+    report = await _sync_results(context)
+    if report["written"]:
+        logging.info("Results sync: wrote %d new result(s): %s",
+                     report["written"], "; ".join(report["scored"]))
+
+
+async def cmd_syncresults(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update.effective_user.id):
+        return
+    await _say(update, "⏳🔄 دارم نتیجه‌ی بازی‌های تموم‌شده رو از API می‌گیرم…")
+    report = await _sync_results(context)
+    if not report["written"]:
+        await _say(update, "🤷 نتیجه‌ی جدیدی برای نوشتن نبود (یا بازیا هنوز تموم نشدن).")
+        return
+    shown = "\n".join(f"  • {_iso(s)}" for s in report["scored"][:25])
+    await _say(update, f"✅ *{_fa_num(report['written'])}* نتیجه تو شیت ثبت شد:\n{shown}")
 
 
 # ── Reminders: nudge users who haven't predicted upcoming matches ────────
@@ -761,7 +851,9 @@ def register(app: Application):
     app.add_handler(CommandHandler("assignments", cmd_assignments))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CommandHandler("synckickoffs", cmd_synckickoffs))
+    app.add_handler(CommandHandler("syncresults", cmd_syncresults))
     # interactive
+    app.add_handler(CallbackQueryHandler(predict_page, pattern=r"^ppage:\d+$"))
     app.add_handler(CallbackQueryHandler(open_stepper, pattern=r"^pick:\d+$"))
     app.add_handler(CallbackQueryHandler(stepper_action, pattern=r"^sp:"))
     app.add_handler(CallbackQueryHandler(special_choice, pattern=r"^s:\d+$"))

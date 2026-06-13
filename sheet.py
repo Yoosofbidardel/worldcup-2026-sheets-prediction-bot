@@ -268,6 +268,29 @@ class SheetClient:
                 unmatched.append(f"{m['home']} – {m['away']}")
         return {"written": written, "unmatched": unmatched}
 
+    # ── Results (auto-filled from the API after a match finishes) ────────
+    def sync_results(self, results_map: dict) -> dict:
+        """Write finished-match results into columns C/D from
+        {(canon_home, canon_away): (home_goals, away_goals)}.
+
+        Only fills rows whose result is still EMPTY, so a manual entry or
+        correction in the sheet is never overwritten. Returns a small report.
+        """
+        written, scored = 0, []
+        for m in self.matches():
+            if m["actual_home"] is not None:
+                continue  # already has a result — leave it alone
+            sc = results_map.get((canon(m["home"]), canon(m["away"])))
+            if not sc:
+                continue
+            home_goals, away_goals = sc
+            with self._lock:
+                self._ws.update_acell(f"C{m['row']}", home_goals)
+                self._ws.update_acell(f"D{m['row']}", away_goals)
+            written += 1
+            scored.append(f"{m['home']} {home_goals}-{away_goals} {m['away']}")
+        return {"written": written, "scored": scored}
+
     # ── Leaderboard (totals are computed live by the sheet) ──────────────
     def leaderboard(self) -> list[dict]:
         with self._lock:

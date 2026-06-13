@@ -78,3 +78,37 @@ def fetch_kickoffs() -> dict:
             out[(canon(home), canon(away))] = utc
     logger.info("Fetched %d fixtures from the API.", len(out))
     return out
+
+
+def fetch_results() -> dict:
+    """Return {(canon_home, canon_away): (home_goals, away_goals)} for matches
+    the API marks FINISHED. Used to auto-fill results in the sheet after a game.
+
+    Returns {} on any error (the caller then leaves the sheet untouched).
+    """
+    if not FOOTBALL_API_KEY:
+        return {}
+    url = f"{FOOTBALL_API_BASE}/competitions/{COMPETITION_CODE}/matches"
+    try:
+        resp = requests.get(url, headers={"X-Auth-Token": FOOTBALL_API_KEY}, timeout=15)
+        resp.raise_for_status()
+        matches = resp.json().get("matches", [])
+    except Exception as e:
+        logger.error("Failed to fetch results: %s", e)
+        return {}
+
+    out = {}
+    for m in matches:
+        try:
+            if m.get("status") != "FINISHED":
+                continue
+            home = m["homeTeam"]["name"]
+            away = m["awayTeam"]["name"]
+            ft = m["score"]["fullTime"]
+            h, a = ft["home"], ft["away"]
+        except (KeyError, TypeError):
+            continue
+        if home and away and h is not None and a is not None:
+            out[(canon(home), canon(away))] = (h, a)
+    logger.info("Fetched %d finished results from the API.", len(out))
+    return out
