@@ -95,15 +95,14 @@ def _rtl(text: str) -> str:
 
 
 def _fmt_kickoff(dt) -> str:
-    """Kickoff shown in both Shamsi and Gregorian, isolated as one unit."""
+    """Kickoff shown in Shamsi (Jalali) only, Tehran time, isolated as one unit."""
     if not dt:
         return ""
     local = dt.astimezone(_TZ)
     jd = jdatetime.datetime.fromgregorian(datetime=local)
     shamsi = _fa_num(f"{jd.day} {_FA_MONTHS[jd.month - 1]} {jd.year}")
-    greg = local.strftime("%d %b %Y")
     clock = _fa_num(local.strftime("%H:%M"))
-    return _iso(f"{shamsi} ({greg}) ⏰ {clock}")
+    return _iso(f"{shamsi} ⏰ {clock}")
 
 
 def _sheet(context):
