@@ -8,10 +8,11 @@ import json
 import os
 import threading
 
-from config import ASSIGNMENTS_FILE, REMINDERS_FILE
+from config import ASSIGNMENTS_FILE, REMINDERS_FILE, SEEN_FILE
 
 _lock = threading.Lock()
 _rem_lock = threading.Lock()
+_seen_lock = threading.Lock()
 
 
 def _load() -> dict:
@@ -100,3 +101,28 @@ def mark_reminded(user_id: int, row: int, window: int):
         data = _load_reminders()
         data[_rem_key(user_id, row, window)] = True
         _save_reminders(data)
+
+
+# ── First-time guide tracking ────────────────────────────────────────────
+def _load_seen() -> dict:
+    if not os.path.exists(SEEN_FILE):
+        return {}
+    try:
+        with open(SEEN_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (ValueError, OSError):
+        return {}
+
+
+def has_seen_intro(user_id: int) -> bool:
+    return str(user_id) in _load_seen()
+
+
+def mark_seen_intro(user_id: int):
+    with _seen_lock:
+        data = _load_seen()
+        data[str(user_id)] = True
+        tmp = SEEN_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, SEEN_FILE)

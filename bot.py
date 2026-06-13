@@ -48,7 +48,9 @@ BTN_SPECIAL = "🏆 پیش‌بینی ویژه"
 BTN_MINE = "📋 پیش‌بینی‌های من"
 BTN_MATCHES = "📅 برنامه بازی‌ها"
 BTN_LEADERBOARD = "📊 جدول امتیازات"  # admin only
+BTN_BROADCAST = "📢 پیام به همه"  # admin only
 BTN_WHOAMI = "🆔 من کی‌ام؟"
+BTN_HELP = "❓ راهنما"
 
 # ── Bidi helpers (keep the layout stable when Latin text appears) ─────────
 RLM = "‏"  # right-to-left mark — forces RTL base direction on a line
@@ -107,11 +109,51 @@ def _main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(BTN_PREDICT), KeyboardButton(BTN_SPECIAL)],
         [KeyboardButton(BTN_MINE), KeyboardButton(BTN_MATCHES)],
-        [KeyboardButton(BTN_WHOAMI)],
+        [KeyboardButton(BTN_WHOAMI), KeyboardButton(BTN_HELP)],
     ]
-    if is_admin:  # leaderboard (others' scores) is admin-only
-        rows.append([KeyboardButton(BTN_LEADERBOARD)])
+    if is_admin:  # leaderboard (others' scores) + broadcast are admin-only
+        rows.append([KeyboardButton(BTN_LEADERBOARD), KeyboardButton(BTN_BROADCAST)])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+# ── The first-time guide ──────────────────────────────────────────────────
+GUIDE = (
+    "📖 *راهنمای بازیِ پیش‌بینی جام جهانی ۲۰۲۶* ⚽️🎉\n\n"
+    "سلام رفیق! 😎 این‌جا قراره نتیجه‌ی بازیا رو حدس بزنی و با بقیه رقابت کنی. "
+    "بریم ببینیم چیکار باید کنی 👇\n\n"
+    "🎯 *پیش‌بینی بازی*\n"
+    "دکمه‌ی «🎯 پیش‌بینی بازی» رو بزن، یه بازی انتخاب کن، با ➖ و ➕ نتیجه رو بچین "
+    "و «✅ ذخیره» رو بزن. تمام!\n\n"
+    "🔄 *عوض کردنش*\n"
+    "هر وقت خواستی برگرد و پیش‌بینیتو عوض کن، آزادی کامل!\n\n"
+    "🏆 *پیش‌بینی ویژه*\n"
+    "قهرمان، آقای گل و بهترین بازیکن تورنمنت رو هم حدس بزن (امتیازش بیشتره! 🤑).\n\n"
+    "📋 *پیش‌بینی‌های من*\n"
+    "ببین تا حالا چی زدی و نتیجه‌ی واقعی بازیا چی شده.\n\n"
+    "📅 *برنامه بازی‌ها*\n"
+    "لیست بازیا، زمان شروع (به تاریخ شمسی و میلادی) و نتایج.\n\n"
+    "⏰ *یادآوری*\n"
+    "اگه بازی‌ای رو پیش‌بینی نکرده باشی، ۲۴ و ۳ و ۱ ساعت قبلش بهت تذکر می‌دم که یادت نره! 😉\n\n"
+    "🏅 *امتیازا چطوری حساب میشه؟*\n"
+    "همه‌چی خودکار حساب میشه، پس تقلب نداریم! 😄\n\n"
+    "🆔 *هنوز وصل نیستی؟*\n"
+    "دکمه‌ی «🆔 من کی‌ام؟» رو بزن و آیدیتو برای ادمین بفرست تا وصلت کنه.\n\n"
+    "موفق باشی و امیدوارم ببری (ولی نه بیشتر از من 😏)!"
+)
+
+ADMIN_GUIDE = (
+    "\n\n— — — — —\n"
+    "👑 *ویژه‌ی ادمین*\n"
+    "• «📢 پیام به همه» — یه پیام برای همه‌ی شرکت‌کننده‌ها بفرست.\n"
+    "• «📊 جدول امتیازات» — جدول رو ببین (فقط تو می‌بینیش).\n"
+    "• `/slots` و `/assign <idx> <id>` — وصل کردن آدما به اسما.\n"
+    "• `/assignments` و `/unassign <id>` — مدیریت اتصال‌ها.\n"
+    "• `/synckickoffs` — گرفتن زمان شروع بازیا از API."
+)
+
+
+def _guide_for(is_admin: bool) -> str:
+    return GUIDE + (ADMIN_GUIDE if is_admin else "")
 
 
 async def _run(func, *args):
@@ -198,7 +240,17 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{'  `@' + user.username + '`' if user.username else ''}\n\n"
             "💡 این پیامو برای ادمین فوروارد کن، یا هر وقت خواستی دکمه‌ی «🆔 من کی‌ام؟» رو بزن."
         )
-    await _say(update, msg, reply_markup=_main_kb(_is_admin(user.id)))
+    is_admin = _is_admin(user.id)
+    await _say(update, msg, reply_markup=_main_kb(is_admin))
+    # First time someone opens the bot, hand them the full guide.
+    if not store.has_seen_intro(user.id):
+        store.mark_seen_intro(user.id)
+        await _say(update, _guide_for(is_admin))
+
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    is_admin = _is_admin(update.effective_user.id)
+    await _say(update, _guide_for(is_admin), reply_markup=_main_kb(is_admin))
 
 
 async def cmd_whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -441,8 +493,19 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await cmd_leaderboard(update, context)
     if text == BTN_WHOAMI:
         return await cmd_whoami(update, context)
+    if text == BTN_HELP:
+        return await cmd_help(update, context)
+    if text == BTN_BROADCAST:
+        return await cmd_broadcast(update, context)
 
     pending = context.user_data.get("await")
+    # Admin is composing a broadcast: this text is the message to send to everyone.
+    if pending and pending[0] == "broadcast":
+        context.user_data.clear()
+        if not _is_admin(update.effective_user.id):
+            return
+        await _broadcast(update, context, text)
+        return
     if not pending or pending[0] != "special":
         return  # nothing awaited; ignore stray text
     row = pending[1]
@@ -521,6 +584,40 @@ async def cmd_assignments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for uid, info in sorted(data.items(), key=lambda x: x[1]["name"]):
         lines.append(f"• {info['name']} — آیدی {_iso(uid)}")
     await _say(update, "\n".join(lines))
+
+
+# ── Broadcast: admin sends one message to every linked participant ───────
+async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update.effective_user.id):
+        return
+    # /broadcast <text> sends immediately; bare button/command asks for the text.
+    text = " ".join(context.args).strip() if context.args else ""
+    if not text:
+        context.user_data["await"] = ("broadcast", None)
+        await _say(update, "✍️ متن پیامی که می‌خوای برای *همه‌ی شرکت‌کننده‌ها* بره رو بفرست:")
+        return
+    await _broadcast(update, context, text)
+
+
+async def _broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    data = store.all_assignments()
+    if not data:
+        await _say(update, "🤷 هنوز هیچ شرکت‌کننده‌ای وصل نشده که بهش پیام بدم.")
+        return
+    # Sent without Markdown parsing so the admin's text can't break formatting.
+    out = _rtl(f"📢 پیام ادمین:\n\n{text}")
+    sent = failed = 0
+    for uid in data:
+        try:
+            await context.bot.send_message(chat_id=uid, text=out)
+            sent += 1
+        except Exception as e:
+            failed += 1
+            logging.warning("Broadcast to %s failed: %s", uid, e)
+    msg = f"✅ پیام به *{_fa_num(sent)}* نفر فرستاده شد."
+    if failed:
+        msg += f"\n⚠️ *{_fa_num(failed)}* نفر ناموفق (شاید ربات رو استارت نکردن یا بلاک کردن)."
+    await _say(update, msg)
 
 
 # ── Kickoff-time sync (API → sheet) ──────────────────────────────────────
@@ -650,6 +747,7 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
 
 def register(app: Application):
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("whoami", cmd_whoami))
     app.add_handler(CommandHandler("predict", cmd_predict))
     app.add_handler(CommandHandler("special", cmd_special))
@@ -661,6 +759,7 @@ def register(app: Application):
     app.add_handler(CommandHandler("assign", cmd_assign))
     app.add_handler(CommandHandler("unassign", cmd_unassign))
     app.add_handler(CommandHandler("assignments", cmd_assignments))
+    app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CommandHandler("synckickoffs", cmd_synckickoffs))
     # interactive
     app.add_handler(CallbackQueryHandler(open_stepper, pattern=r"^pick:\d+$"))

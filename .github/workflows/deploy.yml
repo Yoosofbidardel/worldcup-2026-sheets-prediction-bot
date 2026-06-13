@@ -45,6 +45,7 @@ jobs:
             --exclude='service_account.json' \
             --exclude='assignments.json' \
             --exclude='reminders_sent.json' \
+            --exclude='seen_intro.json' \
             --exclude='*.png' \
             -e "ssh -i ~/.ssh/id_deploy -p ${SSH_PORT:-22}" \
             ./ "$SSH_USER@$SSH_HOST:$DEPLOY_DIR/"

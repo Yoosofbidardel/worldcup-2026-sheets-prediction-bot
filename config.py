@@ -75,3 +75,6 @@ REMINDER_WINDOWS_HOURS = [24, 3, 1]
 REMINDER_CHECK_MINUTES = float(os.getenv("REMINDER_CHECK_MINUTES", "30"))
 # Tracks which reminders were already sent, so none is sent twice.
 REMINDERS_FILE = os.path.join(os.path.dirname(__file__), "reminders_sent.json")
+
+# Tracks which users have already seen the first-time guide (so it shows once).
+SEEN_FILE = os.path.join(os.path.dirname(__file__), "seen_intro.json")
