@@ -1,0 +1,8 @@
+.env
+service_account.json
+assignments.json
+reminders_sent.json
+.venv/
+__pycache__/
+*.pyc
+bot_profile.png

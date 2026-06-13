@@ -1,0 +1,669 @@
+"""Telegram handlers for the World Cup 2026 prediction bot (Farsi, RTL UI).
+
+Flow:
+  • Admin assigns each Telegram user to a sheet slot (/slots, /assign).
+  • Assigned users send predictions via friendly buttons; the bot writes the
+    two prediction cells.
+  • Scoring & totals are computed live by the Google Sheet's own formulas.
+  • A background job reminds users who haven't predicted a match yet, 24h / 3h /
+    1h before kickoff.
+
+Text is right-to-left Farsi. Latin/number runs (team names, scores, dates) are
+wrapped in Unicode isolates so they never shuffle the surrounding Farsi line,
+and dates are shown in both the Jalali (Shamsi) and Gregorian calendars.
+"""
+import asyncio
+import logging
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+import jdatetime
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    Update,
+)
+from telegram.constants import ParseMode
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
+
+import api_client
+import store
+from config import ADMIN_IDS, DISPLAY_TZ, REMINDER_WINDOWS_HOURS
+from teams_fa import fa as _team_fa
+
+MAX_SCORE = 20  # cap for the +/- stepper
+
+# ── Friendly menu buttons (tap instead of typing commands) ────────────────
+BTN_PREDICT = "🎯 پیش‌بینی بازی"
+BTN_SPECIAL = "🏆 پیش‌بینی ویژه"
+BTN_MINE = "📋 پیش‌بینی‌های من"
+BTN_MATCHES = "📅 برنامه بازی‌ها"
+BTN_LEADERBOARD = "📊 جدول امتیازات"  # admin only
+BTN_WHOAMI = "🆔 من کی‌ام؟"
+
+# ── Bidi helpers (keep the layout stable when Latin text appears) ─────────
+RLM = "‏"  # right-to-left mark — forces RTL base direction on a line
+_LRI, _PDI = "⁨", "⁩"  # first-strong isolate / pop directional isolate
+_FA_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+try:
+    _TZ = ZoneInfo(DISPLAY_TZ)
+except Exception:
+    _TZ = ZoneInfo("UTC")
+
+_FA_MONTHS = jdatetime.date.j_months_fa
+
+
+def _fa_num(s) -> str:
+    return str(s).translate(_FA_DIGITS)
+
+
+def _iso(s) -> str:
+    """Isolate a run so it doesn't reorder the surrounding RTL text."""
+    return f"{_LRI}{s}{_PDI}"
+
+
+def _team(name: str) -> str:
+    """Farsi team name, isolated so a Latin fallback can't break the line."""
+    return _iso(_team_fa(name))
+
+
+def _rtl(text: str) -> str:
+    """Force every line to RTL base direction."""
+    return "\n".join(RLM + ln for ln in text.split("\n"))
+
+
+def _fmt_kickoff(dt) -> str:
+    """Kickoff shown in both Shamsi and Gregorian, isolated as one unit."""
+    if not dt:
+        return ""
+    local = dt.astimezone(_TZ)
+    jd = jdatetime.datetime.fromgregorian(datetime=local)
+    shamsi = _fa_num(f"{jd.day} {_FA_MONTHS[jd.month - 1]} {jd.year}")
+    greg = local.strftime("%d %b %Y")
+    clock = _fa_num(local.strftime("%H:%M"))
+    return _iso(f"{shamsi} ({greg}) ⏰ {clock}")
+
+
+def _sheet(context):
+    return context.application.bot_data["sheet"]
+
+
+def _is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
+
+
+def _main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
+    """Persistent bottom menu so users tap instead of typing commands."""
+    rows = [
+        [KeyboardButton(BTN_PREDICT), KeyboardButton(BTN_SPECIAL)],
+        [KeyboardButton(BTN_MINE), KeyboardButton(BTN_MATCHES)],
+        [KeyboardButton(BTN_WHOAMI)],
+    ]
+    if is_admin:  # leaderboard (others' scores) is admin-only
+        rows.append([KeyboardButton(BTN_LEADERBOARD)])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+async def _run(func, *args):
+    """Run a blocking gspread call off the event loop."""
+    return await asyncio.to_thread(func, *args)
+
+
+# ── Small reply helpers that always go out RTL + Markdown ────────────────
+async def _say(update: Update, text: str, **kw):
+    kw.setdefault("parse_mode", ParseMode.MARKDOWN)
+    await update.message.reply_text(_rtl(text), **kw)
+
+
+async def _edit(query, text: str, **kw):
+    kw.setdefault("parse_mode", ParseMode.MARKDOWN)
+    await query.edit_message_text(_rtl(text), **kw)
+
+
+def _stepper_kb(row, home_name, away_name, home, away):
+    """Inline score stepper. State (the two scores) is carried in callback_data
+    so +/- taps never touch the network — only Save does."""
+    def cb(act):
+        return f"sp:{row}:{home}:{away}:{act}"
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("➖", callback_data=cb("hm")),
+                InlineKeyboardButton(f"{_team(home_name)}:  {home}", callback_data=cb("noop")),
+                InlineKeyboardButton("➕", callback_data=cb("hp")),
+            ],
+            [
+                InlineKeyboardButton("➖", callback_data=cb("am")),
+                InlineKeyboardButton(f"{_team(away_name)}:  {away}", callback_data=cb("noop")),
+                InlineKeyboardButton("➕", callback_data=cb("ap")),
+            ],
+            [
+                InlineKeyboardButton("✅ ذخیره", callback_data=cb("save")),
+                InlineKeyboardButton("✖️ بیخیال", callback_data=cb("cancel")),
+            ],
+        ]
+    )
+
+
+def _remember_names(context, row, home_name, away_name):
+    context.user_data.setdefault("names", {})[row] = (home_name, away_name)
+
+
+async def _match_names(context, sheet, row):
+    """Team names for a match row, from cache or (rarely) a fresh fetch."""
+    cached = context.user_data.get("names", {}).get(row)
+    if cached:
+        return cached
+    m = next((x for x in await _run(sheet.matches) if x["row"] == row), None)
+    if m:
+        _remember_names(context, row, m["home"], m["away"])
+        return m["home"], m["away"]
+    return "Home", "Away"
+
+
+_NOT_LINKED = "😅 هنوز به هیچ اسمی وصل نیستی! دکمه‌ی «🆔 من کی‌ام؟» رو بزن و آیدیتو برای ادمین بفرست."
+
+
+# ── Basic commands ───────────────────────────────────────────────────────
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    a = store.get_assignment(user.id)
+    if a:
+        msg = (
+            f"⚽️🎉 سلام {a['name']} جان! همه‌چی رو‌به‌راهه، آماده‌ی ترکوندنی! 🔥\n\n"
+            "از دکمه‌های پایین استفاده کن، خیلی راحت‌تره 👇😎\n\n"
+            "🎯 پیش‌بینی بازی – جادوگری شروع شد!\n"
+            "🏆 پیش‌بینی ویژه – قهرمان / آقای گل / ستاره‌ی تورنمنت\n"
+            "📋 پیش‌بینی‌های من – ببین چی زدی (شاید خجالت بکشی 😅)\n"
+            "📅 برنامه بازی‌ها – بازی‌ها و نتایج\n\n"
+            "✨ هر وقت خواستی می‌تونی پیش‌بینیتو عوض کنی، آزادی کامل! 🔄"
+        )
+    else:
+        msg = (
+            "👋🌍 به بازیِ پیش‌بینیِ جام جهانی ۲۰۲۶ خوش اومدی! 🎉⚽️\n\n"
+            "فعلاً به هیچ اسمی وصل نیستی، یه غریبه‌ی دوست‌داشتنی 😎\n"
+            "این اطلاعاتو برای ادمین بفرست تا اضافه‌ت کنه:\n\n"
+            f"`id={user.id}`  name=`{user.full_name}`"
+            f"{'  `@' + user.username + '`' if user.username else ''}\n\n"
+            "💡 این پیامو برای ادمین فوروارد کن، یا هر وقت خواستی دکمه‌ی «🆔 من کی‌ام؟» رو بزن."
+        )
+    await _say(update, msg, reply_markup=_main_kb(_is_admin(user.id)))
+
+
+async def cmd_whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    a = store.get_assignment(user.id)
+    lines = [
+        f"🆔 آیدی تلگرامت: `{user.id}`",
+        f"🙋 اسم: {user.full_name}"
+        + (f" (`@{user.username}`)" if user.username else ""),
+    ]
+    lines.append(f"🔗 وصل به اسم: *{a['name']}*" if a else "🔗 وصل به اسم: _هنوز هیشکی! 🤷_")
+    if _is_admin(user.id):
+        lines.append("👑 نقش: *ادمین* (رئیس بزرگ!)")
+    await _say(update, "\n".join(lines), reply_markup=_main_kb(_is_admin(user.id)))
+
+
+# ── Predicting matches ───────────────────────────────────────────────────
+async def cmd_predict(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    a = store.get_assignment(update.effective_user.id)
+    if not a:
+        await _say(update, _NOT_LINKED)
+        return
+    matches = await _run(_sheet(context).open_matches)
+    if not matches:
+        await _say(update, "🎉 الان هیچ بازی‌ای برای پیش‌بینی نیست. یه چایی بخور و استراحت کن ☕️😌")
+        return
+    for m in matches:
+        _remember_names(context, m["row"], m["home"], m["away"])
+    buttons = []
+    for m in matches:
+        label = f"{_team(m['home'])} 🆚 {_team(m['away'])}"
+        if m["kickoff"]:
+            label += f"  ⏰{_fmt_kickoff(m['kickoff'])}"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"pick:{m['row']}")])
+    await _say(
+        update,
+        "🎯 یه بازی انتخاب کن و پیش‌بینیتو بکن (هر وقت خواستی می‌تونی عوضش کنی 🔄):",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def cmd_special(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    a = store.get_assignment(update.effective_user.id)
+    if not a:
+        await _say(update, _NOT_LINKED)
+        return
+    specials = await _run(_sheet(context).specials)
+    opens = [s for s in specials if s["open"]]
+    if not opens:
+        await _say(update, "🤷 الان هیچ پیش‌بینی ویژه‌ای نیست.")
+        return
+    buttons = [
+        [InlineKeyboardButton(f"{s['label']} ({_fa_num(s['points'])} امتیاز)", callback_data=f"s:{s['row']}")]
+        for s in opens
+    ]
+    await _say(update, "🏆 یه پیش‌بینی ویژه انتخاب کن:", reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def open_stepper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Player tapped a match -> show the score stepper, pre-filled if they
+    already predicted it."""
+    query = update.callback_query
+    await query.answer()
+    a = store.get_assignment(update.effective_user.id)
+    if not a:
+        await _edit(query, _NOT_LINKED)
+        return
+    row = int(query.data.split(":")[1])
+    sheet = _sheet(context)
+    match = next((m for m in await _run(sheet.matches) if m["row"] == row), None)
+    if not match or not match["open"]:
+        await _edit(query, "🔒 این بازی برای پیش‌بینی بسته‌ست.")
+        return
+    _remember_names(context, row, match["home"], match["away"])
+    home, away = await _run(sheet.match_prediction, a["col"], row)
+    home, away = home or 0, away or 0
+    when = f"\n🕐 سوت شروع: {_fmt_kickoff(match['kickoff'])}" if match["kickoff"] else ""
+    await _edit(
+        query,
+        f"⚽️ *{_team(match['home'])}* 🆚 *{_team(match['away'])}*\n"
+        f"👇 نتیجه رو بچین و ذخیره کن (هر وقت خواستی عوضش کن 🔄){when}",
+        reply_markup=_stepper_kb(row, match["home"], match["away"], home, away),
+    )
+
+
+async def stepper_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle +/- / Save / Cancel taps on the stepper (state lives in callback_data)."""
+    query = update.callback_query
+    _, row, home, away, act = query.data.split(":")
+    row, home, away = int(row), int(home), int(away)
+    home_name, away_name = await _match_names(context, _sheet(context), row)
+
+    if act in ("hm", "hp", "am", "ap"):
+        if act == "hm":
+            home = max(0, home - 1)
+        elif act == "hp":
+            home = min(MAX_SCORE, home + 1)
+        elif act == "am":
+            away = max(0, away - 1)
+        else:
+            away = min(MAX_SCORE, away + 1)
+        await query.answer()
+        await query.edit_message_reply_markup(
+            reply_markup=_stepper_kb(row, home_name, away_name, home, away)
+        )
+        return
+
+    if act == "noop":
+        await query.answer()
+        return
+
+    if act == "cancel":
+        await query.answer("بیخیال شدیم 😎")
+        await _edit(query, "✖️ پیش‌بینی لغو شد. شاید بعداً پشیمون شی 🤭")
+        return
+
+    # save
+    a = store.get_assignment(update.effective_user.id)
+    if not a:
+        await query.answer()
+        await _edit(query, _NOT_LINKED)
+        return
+    sheet = _sheet(context)
+    match = next((m for m in await _run(sheet.matches) if m["row"] == row), None)
+    if not match or not match["open"]:
+        await query.answer()
+        await _edit(query, "⏰ این بازی همین الان بسته شد — پیش‌بینی ذخیره نشد. 😬")
+        return
+    await _run(sheet.set_match_prediction, a["col"], row, home, away)
+    await query.answer("ذخیره شد ✅🔥")
+    await _edit(
+        query,
+        f"✅ ثبت شد: {_team(home_name)} *{_iso(f'{home}-{away}')}* {_team(away_name)} 🎯\n"
+        "به امید درست از آب دراومدن! 🤞",
+    )
+
+
+async def special_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Player tapped a special prediction -> ask for a text answer."""
+    query = update.callback_query
+    await query.answer()
+    if not store.get_assignment(update.effective_user.id):
+        await _edit(query, _NOT_LINKED)
+        return
+    row = int(query.data.split(":")[1])
+    special = next((s for s in await _run(_sheet(context).specials) if s["row"] == row), None)
+    if not special or not special["open"]:
+        await _edit(query, "🔒 این پیش‌بینی بسته‌ست.")
+        return
+    context.user_data["await"] = ("special", row)
+    context.user_data["label"] = special["label"]
+    await _edit(
+        query,
+        f"🏆 *{special['label']}*\n\n✍️ جوابتو به‌صورت متن بفرست (مثلاً اسم یه تیم یا بازیکن).",
+    )
+
+
+async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    a = store.get_assignment(update.effective_user.id)
+    if not a:
+        await _say(update, _NOT_LINKED)
+        return
+    sheet = _sheet(context)
+    preds = await _run(sheet.user_predictions, a["col"])
+    matches = {m["row"]: m for m in await _run(sheet.matches)}
+    specials = {s["row"]: s for s in await _run(sheet.specials)}
+
+    lines = [f"📋 *{a['name']}* جان، این‌ها پیش‌بینی‌های توئه 👇\n"]
+    if preds["matches"]:
+        for row in sorted(preds["matches"]):
+            m = matches.get(row)
+            if not m:
+                continue
+            h, aw = preds["matches"][row]
+            res = ""
+            if m["actual_home"] is not None:
+                actual = _iso(f"{m['actual_home']}-{m['actual_away']}")
+                res = f"  (نتیجه‌ی واقعی: {actual})"
+            score = _iso(f"{h}-{aw}")
+            lines.append(f"⚽️ {_team(m['home'])} {score} {_team(m['away'])}{res}")
+    else:
+        lines.append("• هنوز هیچ بازی‌ای پیش‌بینی نکردی! 😴 برو پیش‌بینی کن تنبل‌خان 😏")
+    if preds["specials"]:
+        lines.append("")
+        for row in sorted(preds["specials"]):
+            s = specials.get(row)
+            lines.append(f"🏆 {s['label'] if s else row}: {_iso(preds['specials'][row])}")
+    await _say(update, "\n".join(lines))
+
+
+async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Others' scores are private — admin only.
+    if not _is_admin(update.effective_user.id):
+        await _say(update, "🔒 جدول فقط مال ادمینه! فضولی موقوف 😜")
+        return
+    board = await _run(_sheet(context).leaderboard)
+    medals = {0: "🥇", 1: "🥈", 2: "🥉"}
+    lines = ["🏆📊 *جدول امتیازات* (لحظه‌ای و بی‌رحم! 😈)\n"]
+    for i, e in enumerate(board):
+        total = int(e["total"]) if float(e["total"]).is_integer() else round(e["total"], 2)
+        rank = medals.get(i, f"{_fa_num(i + 1)}.")
+        lines.append(f"{rank} {e['name']} — *{_iso(_fa_num(total))}*")
+    await _say(update, "\n".join(lines))
+
+
+async def cmd_matches(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    matches = await _run(_sheet(context).matches)
+    if not matches:
+        await _say(update, "🤷 هنوز هیچ بازی‌ای ثبت نشده.")
+        return
+    lines = ["📅⚽️ *برنامه‌ی بازی‌ها*\n"]
+    for m in matches:
+        if m["actual_home"] is not None:
+            score = _iso(f"{m['actual_home']}-{m['actual_away']}")
+            lines.append(f"✅ {_team(m['home'])} *{score}* {_team(m['away'])}")
+        elif m["open"]:
+            when = f"  ⏰{_fmt_kickoff(m['kickoff'])}" if m["kickoff"] else ""
+            lines.append(f"🔵 {_team(m['home'])} 🆚 {_team(m['away'])}  _(باز)_{when}")
+        else:  # started but no result yet (only when locking is enabled)
+            lines.append(f"🔒 {_team(m['home'])} 🆚 {_team(m['away'])}  _(قفل)_")
+    await _say(update, "\n".join(lines))
+
+
+# ── Free text: menu buttons + special-prediction answers ─────────────────
+async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Route menu-button taps to the right handler; otherwise treat the text as
+    an awaited special-prediction answer."""
+    text = (update.message.text or "").strip()
+
+    # Menu buttons (work even mid-flow, so a stray button never gets eaten).
+    if text == BTN_PREDICT:
+        return await cmd_predict(update, context)
+    if text == BTN_SPECIAL:
+        return await cmd_special(update, context)
+    if text == BTN_MINE:
+        return await cmd_mypredictions(update, context)
+    if text == BTN_MATCHES:
+        return await cmd_matches(update, context)
+    if text == BTN_LEADERBOARD:
+        return await cmd_leaderboard(update, context)
+    if text == BTN_WHOAMI:
+        return await cmd_whoami(update, context)
+
+    pending = context.user_data.get("await")
+    if not pending or pending[0] != "special":
+        return  # nothing awaited; ignore stray text
+    row = pending[1]
+    a = store.get_assignment(update.effective_user.id)
+    if not a:
+        context.user_data.clear()
+        await _say(update, "😕 دیگه به هیچ اسمی وصل نیستی. با ادمین حرف بزن.")
+        return
+    label = context.user_data.get("label", "")
+    await _run(_sheet(context).set_special_prediction, a["col"], row, text)
+    context.user_data.clear()
+    await _say(
+        update,
+        f"✅ ثبت شد: {label}  →  *{_iso(text)}* 🎯\nانگار به خودت خیلی مطمئنی! 😎",
+    )
+
+
+# ── Admin commands ───────────────────────────────────────────────────────
+async def cmd_slots(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update.effective_user.id):
+        return
+    slots = await _run(_sheet(context).slots, True)
+    assigned = {info["col"]: (uid, info) for uid, info in store.all_assignments().items()}
+    lines = ["📝 *اسلات‌ها* (شماره — اسم — وصل به کی)\n"]
+    for s in slots:
+        who = assigned.get(s["col"])
+        tag = f"{who[1]['name']} (آیدی {_iso(who[0])})" if who else "—"
+        lines.append(f"{_fa_num(s['idx'])}. {s['name']}  →  {tag}")
+    lines.append("\n🔗 برای وصل کردن: `/assign <idx> <telegram_id>`")
+    await _say(update, "\n".join(lines))
+
+
+async def cmd_assign(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update.effective_user.id):
+        return
+    args = context.args
+    if len(args) < 2 or not args[0].isdigit() or not args[1].lstrip("-").isdigit():
+        await _say(update, "📌 طرز استفاده: `/assign <idx> <telegram_id>`")
+        return
+    idx, target = int(args[0]), int(args[1])
+    slot = await _run(_sheet(context).slot_by_idx, idx)
+    if not slot:
+        await _say(update, f"🤔 اسلاتی با شماره‌ی {_iso(idx)} نداریم. /slots رو ببین.")
+        return
+    taken = store.col_is_taken(slot["col"])
+    if taken and taken != target:
+        await _say(
+            update,
+            f"⚠️ {slot['name']} قبلاً به آیدی {_iso(taken)} وصله. "
+            "اگه می‌خوای عوضش کنی، اول /unassign رو بزن.",
+        )
+        return
+    store.set_assignment(target, slot["name"], slot["col"])
+    await _say(update, f"✅🔗 آیدی {_iso(target)} به *{slot['name']}* وصل شد! خوش اومدی به جمع 🎉")
+
+
+async def cmd_unassign(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update.effective_user.id):
+        return
+    if not context.args or not context.args[0].lstrip("-").isdigit():
+        await _say(update, "📌 طرز استفاده: `/unassign <telegram_id>`")
+        return
+    target = int(context.args[0])
+    ok = store.remove_assignment(target)
+    await _say(update, "✅ حذف شد. خداحافظ! 👋" if ok else "🤷 این آیدی اصلاً وصل نبود.")
+
+
+async def cmd_assignments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update.effective_user.id):
+        return
+    data = store.all_assignments()
+    if not data:
+        await _say(update, "🤷 هنوز هیچ‌کس وصل نشده. /slots رو ببین.")
+        return
+    lines = ["🔗 *وصل‌شده‌های فعلی*\n"]
+    for uid, info in sorted(data.items(), key=lambda x: x[1]["name"]):
+        lines.append(f"• {info['name']} — آیدی {_iso(uid)}")
+    await _say(update, "\n".join(lines))
+
+
+# ── Kickoff-time sync (API → sheet) ──────────────────────────────────────
+async def _sync_kickoffs(context) -> dict:
+    sheet = _sheet(context)
+    kmap = await asyncio.to_thread(api_client.fetch_kickoffs)
+    if not kmap:
+        return {"written": 0, "unmatched": [], "fetched": 0}
+    report = await asyncio.to_thread(sheet.sync_kickoffs, kmap)
+    report["fetched"] = len(kmap)
+    return report
+
+
+async def refresh_kickoffs_job(context: ContextTypes.DEFAULT_TYPE):
+    """Periodic background refresh of kickoff times from the football API."""
+    report = await _sync_kickoffs(context)
+    logging.info(
+        "Kickoff sync: fetched %d, wrote %d new, %d unmatched.",
+        report.get("fetched", 0), report["written"], len(report["unmatched"]),
+    )
+    if report["unmatched"]:
+        logging.warning(
+            "Unmatched fixtures — set their kickoff manually in the sheet: %s",
+            "; ".join(report["unmatched"]),
+        )
+
+
+async def cmd_synckickoffs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update.effective_user.id):
+        return
+    await _say(update, "⏳🔄 دارم زمان شروع بازی‌ها رو از API می‌گیرم…")
+    report = await _sync_kickoffs(context)
+    msg = f"✅ *{_fa_num(report.get('fetched', 0))}* بازی گرفته شد، *{_fa_num(report['written'])}* زمان شروع جدید نوشته شد. 🕐"
+    if report["unmatched"]:
+        shown = "\n".join(f"  • {_team(x.split(' – ')[0])} 🆚 {_team(x.split(' – ')[-1])}" for x in report["unmatched"][:25])
+        msg += (
+            f"\n\n⚠️ *{_fa_num(len(report['unmatched']))}* بازی با اسم جور در نیومد — "
+            f"زمان شروعشونو دستی تو ستون *BV* شیت بذار:\n{shown}"
+        )
+    await _say(update, msg)
+
+
+# ── Reminders: nudge users who haven't predicted upcoming matches ────────
+def _window_for(hours_left: float):
+    """Which reminder window (in hours) the time-to-kickoff falls into, or None.
+    Bands are (next_smaller, window]: e.g. for [24,3,1] → (3,24], (1,3], (0,1]."""
+    windows = REMINDER_WINDOWS_HOURS
+    for i, w in enumerate(windows):
+        lower = windows[i + 1] if i + 1 < len(windows) else 0
+        if lower < hours_left <= w:
+            return w
+    return None
+
+
+def _reminder_text(window: int, name: str, home: str, away: str, kickoff) -> str:
+    match = f"*{_team(home)}* 🆚 *{_team(away)}*"
+    when = _fmt_kickoff(kickoff)
+    if window == 24:
+        return _rtl(
+            f"⏳😴 {name} جان، ۲۴ ساعت مونده به {match} و تو هنوز پیش‌بینی نکردی!\n"
+            f"🕐 سوت شروع: {when}\n"
+            "نکنه قراره غافلگیرمون کنی؟ 🤨 بزن بریم 👉 «🎯 پیش‌بینی بازی»"
+        )
+    if window == 3:
+        return _rtl(
+            f"🚨🔥 آژیر قرمز {name}! فقط ۳ ساعت تا {match} مونده و پیش‌بینیت هنوز خالیه! 😱\n"
+            f"🕐 سوت شروع: {when}\n"
+            "دست بجنبون قهرمان 🏃‍♂️💨 «🎯 پیش‌بینی بازی»"
+        )
+    return _rtl(
+        f"⏰😭 آخرین هشدار {name}! یه ساعت بیشتر نمونده تا {match}!\n"
+        f"🕐 سوت شروع: {when}\n"
+        "الان نزنی بعداً اشک تمساح نریز ها 🐊 «🎯 پیش‌بینی بازی»"
+    )
+
+
+async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    """Every REMINDER_CHECK_MINUTES: DM each linked user who hasn't predicted a
+    match yet, when it's 24h / 3h / 1h away. One reminder per (user, match,
+    window). Needs the match's kickoff time to be known."""
+    sheet = _sheet(context)
+    matches = await _run(sheet.matches)
+    now = datetime.now(timezone.utc)
+    upcoming = [
+        (m, (m["kickoff"] - now).total_seconds() / 3600.0)
+        for m in matches
+        if m["kickoff"] and m["kickoff"] > now
+    ]
+    due = [(m, _window_for(hrs)) for m, hrs in upcoming]
+    due = [(m, w) for m, w in due if w is not None]
+    if not due:
+        return
+
+    assignments = store.all_assignments()
+    if not assignments:
+        return
+
+    # Read each user's predicted rows once (cheap: 2 ranges per user).
+    predicted = {}
+    for uid, info in assignments.items():
+        try:
+            predicted[uid] = await _run(sheet.predicted_match_rows, info["col"])
+        except Exception as e:
+            logging.warning("Reminder: couldn't read predictions for %s: %s", uid, e)
+            predicted[uid] = set()
+
+    sent = 0
+    for m, window in due:
+        for uid, info in assignments.items():
+            if m["row"] in predicted.get(uid, set()):
+                continue  # already predicted — no nudge
+            if store.was_reminded(uid, m["row"], window):
+                continue  # already nudged for this window
+            try:
+                await context.bot.send_message(
+                    chat_id=uid,
+                    text=_reminder_text(window, info["name"], m["home"], m["away"], m["kickoff"]),
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                store.mark_reminded(uid, m["row"], window)
+                sent += 1
+            except Exception as e:
+                logging.warning("Reminder: send to %s failed: %s", uid, e)
+    if sent:
+        logging.info("Sent %d reminder(s).", sent)
+
+
+def register(app: Application):
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("whoami", cmd_whoami))
+    app.add_handler(CommandHandler("predict", cmd_predict))
+    app.add_handler(CommandHandler("special", cmd_special))
+    app.add_handler(CommandHandler("mypredictions", cmd_mypredictions))
+    app.add_handler(CommandHandler("leaderboard", cmd_leaderboard))
+    app.add_handler(CommandHandler("matches", cmd_matches))
+    # admin
+    app.add_handler(CommandHandler("slots", cmd_slots))
+    app.add_handler(CommandHandler("assign", cmd_assign))
+    app.add_handler(CommandHandler("unassign", cmd_unassign))
+    app.add_handler(CommandHandler("assignments", cmd_assignments))
+    app.add_handler(CommandHandler("synckickoffs", cmd_synckickoffs))
+    # interactive
+    app.add_handler(CallbackQueryHandler(open_stepper, pattern=r"^pick:\d+$"))
+    app.add_handler(CallbackQueryHandler(stepper_action, pattern=r"^sp:"))
+    app.add_handler(CallbackQueryHandler(special_choice, pattern=r"^s:\d+$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))

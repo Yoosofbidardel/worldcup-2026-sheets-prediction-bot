@@ -1,0 +1,6 @@
+python-telegram-bot[job-queue]==21.*
+gspread==6.*
+google-auth==2.*
+python-dotenv==1.*
+requests==2.*
+jdatetime==5.*
