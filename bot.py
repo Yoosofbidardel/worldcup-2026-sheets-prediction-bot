@@ -503,7 +503,7 @@ async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     medals = {0: "🥇", 1: "🥈", 2: "🥉"}
     lines = ["🏆📊 *جدول امتیازات* (لحظه‌ای و بی‌رحم! 😈)\n"]
     for i, e in enumerate(board):
-        total = int(e["total"]) if float(e["total"]).is_integer() else round(e["total"], 2)
+        total = f"{float(e['total']):.2f}"  # always two decimals, e.g. 47.50
         rank = medals.get(i, f"{_fa_num(i + 1)}.")
         lines.append(f"{rank} {e['name']} — *{_iso(_fa_num(total))}*")
     await _say(update, "\n".join(lines))
