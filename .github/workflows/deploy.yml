@@ -1,0 +1,66 @@
+name: Deploy to server
+
+# Auto-deploy on every push to main. You can also trigger it manually from the
+# Actions tab (workflow_dispatch).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Rsync code to server
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
+        run: |
+          rsync -az --delete \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='.venv/' \
+            --exclude='__pycache__/' \
+            --exclude='.env' \
+            --exclude='service_account.json' \
+            --exclude='assignments.json' \
+            --exclude='reminders_sent.json' \
+            --exclude='*.png' \
+            -e "ssh -i ~/.ssh/id_deploy -p ${SSH_PORT:-22}" \
+            ./ "$SSH_USER@$SSH_HOST:$DEPLOY_DIR/"
+
+      - name: Install deps & restart service
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
+          SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "set -e; cd '$DEPLOY_DIR'; \
+             test -d .venv || python3 -m venv .venv; \
+             .venv/bin/pip install -q --upgrade pip; \
+             .venv/bin/pip install -q -r requirements.txt; \
+             sudo systemctl restart '$SERVICE_NAME'; \
+             sudo systemctl is-active '$SERVICE_NAME'"
