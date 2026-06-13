@@ -128,40 +128,40 @@ def _main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
 
 # ── The first-time guide ──────────────────────────────────────────────────
 GUIDE = (
-    "📖 *راهنمای بازیِ پیش‌بینی جام جهانی ۲۰۲۶* ⚽️🎉\n\n"
-    "سلام رفیق! 😎 این‌جا قراره نتیجه‌ی بازیا رو حدس بزنی و با بقیه رقابت کنی. "
-    "بریم ببینیم چیکار باید کنی 👇\n\n"
+    "📖 *راهنمای مسابقه‌ی پیش‌بینی دوره نهم کتان ممپف* ⚽️🎉\n\n"
+    "سلام رفیق جون! 😎 ایجا قراره نتیجه‌ی بازیا رو حدس بزنی و با بقیه کل‌کل کنی. "
+    "بیو ببینیم چی‌کار باید بکنی 👇\n\n"
     "🎯 *پیش‌بینی بازی*\n"
-    "دکمه‌ی «🎯 پیش‌بینی بازی» رو بزن، یه بازی انتخاب کن، با ➖ و ➕ نتیجه رو بچین "
-    "و «✅ ذخیره» رو بزن. تمام!\n\n"
+    "دکمه‌ی «🎯 پیش‌بینی بازی» رو بزن، یه بازی وردار، با ➖ و ➕ نتیجه رو بچین "
+    "و «✅ ذخیره» رو بزن. تموم شد رفت!\n\n"
     "🔄 *عوض کردنش*\n"
-    "تا قبل از شروع بازی هرچقدر خواستی می‌تونی عوضش کنی. ولی بعد از سوت شروع، بازی قفل می‌شه و دیگه نمی‌شه! ⏰🔒\n\n"
+    "تا قبل شروع بازی هرچقد دلت خواست عوضش کن. ولی همین که سوت شروع خورد، قفل می‌شه و دیگه نمی‌شه‌ها! ⏰🔒\n\n"
     "🏁 *نتیجه‌ها*\n"
-    "بعد از هر بازی نتیجه‌ش خودکار ثبت می‌شه و امتیازت حساب می‌شه.\n\n"
+    "بعد هر بازی نتیجه‌ش خودکار ثبت می‌شه و امتیازتم حساب می‌شه، غصه نخور.\n\n"
     "🏆 *پیش‌بینی ویژه*\n"
-    "قهرمان، آقای گل و بهترین بازیکن تورنمنت رو هم حدس بزن (امتیازش بیشتره! 🤑).\n\n"
+    "قهرمان، آقای گل و بهترین بازیکن تورنمنت رو هم حدس بزن (امتیازش چرب‌تره‌ها! 🤑).\n\n"
     "📋 *پیش‌بینی‌های من*\n"
     "ببین تا حالا چی زدی و نتیجه‌ی واقعی بازیا چی شده.\n\n"
     "📅 *برنامه بازی‌ها*\n"
-    "لیست بازیا، زمان شروع (به تاریخ شمسی و میلادی) و نتایج.\n\n"
+    "لیست بازیا، زمان شروع (به تاریخ شمسی و میلادی) و نتیجه‌ها.\n\n"
     "⏰ *یادآوری*\n"
-    "اگه بازی‌ای رو پیش‌بینی نکرده باشی، ۲۴ و ۳ و ۱ ساعت قبلش بهت تذکر می‌دم که یادت نره! 😉\n\n"
-    "🏅 *امتیازا چطوری حساب میشه؟*\n"
-    "همه‌چی خودکار حساب میشه، پس تقلب نداریم! 😄\n\n"
+    "اگه یه بازی رو پیش‌بینی نکرده باشی، ۲۴ و ۳ و ۱ ساعت قبلش بهت تذکر می‌دم که یادت نره‌ها! 😉\n\n"
+    "🏅 *امتیازا چه‌جوری حساب می‌شه؟*\n"
+    "همه‌چی خودکار حساب می‌شه، پس تقلب بی‌تقلب! 😄\n\n"
     "🆔 *هنوز وصل نیستی؟*\n"
-    "دکمه‌ی «🆔 من کی‌ام؟» رو بزن و آیدیتو برای ادمین بفرست تا وصلت کنه.\n\n"
-    "موفق باشی و امیدوارم ببری (ولی نه بیشتر از من 😏)!"
+    "دکمه‌ی «🆔 من کی‌ام؟» رو بزن و آیدیتو وردار بفرست برا ادمین تا وصلت کنه.\n\n"
+    "موفق باشی، ایشالا که ببری (ولی نه بیشتر از من 😏)!"
 )
 
 ADMIN_GUIDE = (
     "\n\n— — — — —\n"
-    "👑 *ویژه‌ی ادمین*\n"
-    "• «📢 پیام به همه» — یه پیام برای همه‌ی شرکت‌کننده‌ها بفرست.\n"
-    "• «📊 جدول امتیازات» — جدول رو ببین (فقط تو می‌بینیش).\n"
+    "👑 *مخصوص ادمین*\n"
+    "• «📢 پیام به همه» — یه پیام بده به همه‌ی بچه‌ها.\n"
+    "• «📊 جدول امتیازات» — جدولو ببین (فقط خودت می‌بینی).\n"
     "• `/slots` و `/assign <idx> <id>` — وصل کردن آدما به اسما.\n"
-    "• `/assignments` و `/unassign <id>` — مدیریت اتصال‌ها.\n"
+    "• `/assignments` و `/unassign <id>` — مدیریت اتصالا.\n"
     "• `/synckickoffs` — گرفتن زمان شروع بازیا از API.\n"
-    "• `/syncresults` — ثبت نتیجه‌ی بازی‌های تموم‌شده (خودکارم انجام می‌شه)."
+    "• `/syncresults` — ثبت نتیجه‌ی بازیای تموم‌شده (خودکارم می‌شه)."
 )
 
 
@@ -205,7 +205,7 @@ def _stepper_kb(row, home_name, away_name, home, away):
             ],
             [
                 InlineKeyboardButton("✅ ذخیره", callback_data=cb("save")),
-                InlineKeyboardButton("✖️ بیخیال", callback_data=cb("cancel")),
+                InlineKeyboardButton("✖️ ولش کن", callback_data=cb("cancel")),
             ],
         ]
     )
@@ -227,7 +227,7 @@ async def _match_names(context, sheet, row):
     return "Home", "Away"
 
 
-_NOT_LINKED = "😅 هنوز به هیچ اسمی وصل نیستی! دکمه‌ی «🆔 من کی‌ام؟» رو بزن و آیدیتو برای ادمین بفرست."
+_NOT_LINKED = "😅 هنوز به هیچ اسمی وصل نیستی که! دکمه‌ی «🆔 من کی‌ام؟» رو بزن، آیدیتو وردار بفرست برا ادمین تا وصلت کنه."
 
 
 # ── Basic commands ───────────────────────────────────────────────────────
@@ -236,22 +236,22 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     a = store.get_assignment(user.id)
     if a:
         msg = (
-            f"⚽️🎉 سلام {a['name']} جان! همه‌چی رو‌به‌راهه، آماده‌ی ترکوندنی! 🔥\n\n"
-            "از دکمه‌های پایین استفاده کن، خیلی راحت‌تره 👇😎\n\n"
-            "🎯 پیش‌بینی بازی – جادوگری شروع شد!\n"
+            f"⚽️🎉 بَه‌بَه سلام {a['name']} جون! چطوری؟ همه‌چی رو‌به‌راهه، بیو بریم بترکونیم! 🔥\n\n"
+            "از این دکمه‌های پایین استفاده کن، خیلی راحته‌ها 👇😎\n\n"
+            "🎯 پیش‌بینی بازی – بزن بریم!\n"
             "🏆 پیش‌بینی ویژه – قهرمان / آقای گل / ستاره‌ی تورنمنت\n"
-            "📋 پیش‌بینی‌های من – ببین چی زدی (شاید خجالت بکشی 😅)\n"
-            "📅 برنامه بازی‌ها – بازی‌ها و نتایج\n\n"
-            "✨ تا قبل از شروع هر بازی می‌تونی پیش‌بینیتو عوض کنی! بعد از سوت شروع قفل می‌شه ⏰🔒"
+            "📋 پیش‌بینی‌های من – ببین چی زدی (شایدم خجالت بکشی 😅)\n"
+            "📅 برنامه بازی‌ها – بازیا و نتیجه‌ها\n\n"
+            "✨ تا قبل شروع هر بازی می‌تونی پیش‌بینیتو عوض کنی! همین که سوت خورد قفل می‌شه ⏰🔒"
         )
     else:
         msg = (
-            "👋🌍 به بازیِ پیش‌بینیِ جام جهانی ۲۰۲۶ خوش اومدی! 🎉⚽️\n\n"
-            "فعلاً به هیچ اسمی وصل نیستی، یه غریبه‌ی دوست‌داشتنی 😎\n"
-            "این اطلاعاتو برای ادمین بفرست تا اضافه‌ت کنه:\n\n"
+            "👋🌍 خوش اومدی به مسابقه‌ی پیش‌بینیِ دوره نهم کتان ممپف! 🎉⚽️\n\n"
+            "فعلاً به هیچ اسمی وصل نیستی، یه غریبه‌ی نازنین 😎\n"
+            "این اطلاعاتو وردار بفرست برا ادمین تا اضافه‌ت کنه:\n\n"
             f"`id={user.id}`  name=`{user.full_name}`"
             f"{'  `@' + user.username + '`' if user.username else ''}\n\n"
-            "💡 این پیامو برای ادمین فوروارد کن، یا هر وقت خواستی دکمه‌ی «🆔 من کی‌ام؟» رو بزن."
+            "💡 این پیامو برا ادمین فوروارد کن، یا هر وقت خواستی دکمه‌ی «🆔 من کی‌ام؟» رو بزن."
         )
     is_admin = _is_admin(user.id)
     await _say(update, msg, reply_markup=_main_kb(is_admin))
@@ -274,9 +274,9 @@ async def cmd_whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🙋 اسم: {user.full_name}"
         + (f" (`@{user.username}`)" if user.username else ""),
     ]
-    lines.append(f"🔗 وصل به اسم: *{a['name']}*" if a else "🔗 وصل به اسم: _هنوز هیشکی! 🤷_")
+    lines.append(f"🔗 وصل به اسم: *{a['name']}*" if a else "🔗 وصل به اسم: _هنوز هیشکی واللا! 🤷_")
     if _is_admin(user.id):
-        lines.append("👑 نقش: *ادمین* (رئیس بزرگ!)")
+        lines.append("👑 نقش: *ادمین* (آقا بالاسر! 😎)")
     await _say(update, "\n".join(lines), reply_markup=_main_kb(_is_admin(user.id)))
 
 
@@ -309,8 +309,8 @@ def _predict_page(matches, page):
     if nav:
         rows.append(nav)
     text = (
-        f"🎯 یه بازی انتخاب کن (صفحه‌ی {_fa_num(page + 1)} از {_fa_num(pages)}) — "
-        "تا قبل از سوت شروع قابل تغییره ⏰:"
+        f"🎯 یه بازی وردار (صفحه‌ی {_fa_num(page + 1)} از {_fa_num(pages)}) — "
+        "تا قبل سوت شروع هرچی خواستی عوضش کن ⏰:"
     )
     return text, InlineKeyboardMarkup(rows)
 
@@ -322,7 +322,7 @@ async def cmd_predict(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     matches = _sorted_open(await _run(_sheet(context).open_matches))
     if not matches:
-        await _say(update, "🎉 الان هیچ بازی‌ای برای پیش‌بینی نیست. یه چایی بخور و استراحت کن ☕️😌")
+        await _say(update, "🎉 الان هیچ بازی‌ای برا پیش‌بینی نی جونم. یه چایی بریز بخور دیگه ☕️😌")
         return
     for m in matches:
         _remember_names(context, m["row"], m["home"], m["away"])
@@ -337,7 +337,7 @@ async def predict_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     page = int(query.data.split(":")[1])
     matches = _sorted_open(await _run(_sheet(context).open_matches))
     if not matches:
-        await _edit(query, "🎉 الان هیچ بازی‌ای برای پیش‌بینی نیست.")
+        await _edit(query, "🎉 الان هیچ بازی‌ای برا پیش‌بینی نی جونم.")
         return
     for m in matches:
         _remember_names(context, m["row"], m["home"], m["away"])
@@ -353,13 +353,13 @@ async def cmd_special(update: Update, context: ContextTypes.DEFAULT_TYPE):
     specials = await _run(_sheet(context).specials)
     opens = [s for s in specials if s["open"]]
     if not opens:
-        await _say(update, "🤷 الان هیچ پیش‌بینی ویژه‌ای نیست.")
+        await _say(update, "🤷 الان هیچ پیش‌بینی ویژه‌ای نی واللا.")
         return
     buttons = [
         [InlineKeyboardButton(f"{s['label']} ({_fa_num(s['points'])} امتیاز)", callback_data=f"s:{s['row']}")]
         for s in opens
     ]
-    await _say(update, "🏆 یه پیش‌بینی ویژه انتخاب کن:", reply_markup=InlineKeyboardMarkup(buttons))
+    await _say(update, "🏆 یه پیش‌بینی ویژه وردار:", reply_markup=InlineKeyboardMarkup(buttons))
 
 
 async def open_stepper(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -375,7 +375,7 @@ async def open_stepper(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sheet = _sheet(context)
     match = next((m for m in await _run(sheet.matches) if m["row"] == row), None)
     if not match or not match["open"]:
-        await _edit(query, "🔒 این بازی برای پیش‌بینی بسته‌ست.")
+        await _edit(query, "🔒 این بازی دیگه بسته‌ست جونم، دیر رسیدی!")
         return
     _remember_names(context, row, match["home"], match["away"])
     home, away = await _run(sheet.match_prediction, a["col"], row)
@@ -384,7 +384,7 @@ async def open_stepper(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _edit(
         query,
         f"⚽️ *{_team(match['home'])}* 🆚 *{_team(match['away'])}*\n"
-        f"👇 نتیجه رو بچین و ذخیره کن (تا قبل از سوت شروع قابل تغییره 🔄){when}",
+        f"👇 نتیجه رو بچین و ذخیره کن (تا قبل سوت شروع هرچقد خواستی عوضش کن 🔄){when}",
         reply_markup=_stepper_kb(row, match["home"], match["away"], home, away),
     )
 
@@ -416,8 +416,8 @@ async def stepper_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if act == "cancel":
-        await query.answer("بیخیال شدیم 😎")
-        await _edit(query, "✖️ پیش‌بینی لغو شد. شاید بعداً پشیمون شی 🤭")
+        await query.answer("ولش کردیم 😎")
+        await _edit(query, "✖️ ولش کردیم. شاید بعداً پشیمون شی‌ها 🤭")
         return
 
     # save
@@ -430,14 +430,14 @@ async def stepper_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     match = next((m for m in await _run(sheet.matches) if m["row"] == row), None)
     if not match or not match["open"]:
         await query.answer()
-        await _edit(query, "⏰ این بازی همین الان بسته شد — پیش‌بینی ذخیره نشد. 😬")
+        await _edit(query, "⏰ ای داد! همین الان بسته شد، پیش‌بینیت ثبت نشد 😬")
         return
     await _run(sheet.set_match_prediction, a["col"], row, home, away)
-    await query.answer("ذخیره شد ✅🔥")
+    await query.answer("ثبت شد ✅🔥")
     await _edit(
         query,
         f"✅ ثبت شد: {_team(home_name)} *{_score(home, away)}* {_team(away_name)} 🎯\n"
-        "به امید درست از آب دراومدن! 🤞",
+        "ایشالا که درست از آب در بیاد! 🤞",
     )
 
 
@@ -451,13 +451,13 @@ async def special_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     row = int(query.data.split(":")[1])
     special = next((s for s in await _run(_sheet(context).specials) if s["row"] == row), None)
     if not special or not special["open"]:
-        await _edit(query, "🔒 این پیش‌بینی بسته‌ست.")
+        await _edit(query, "🔒 این یکی دیگه بسته‌ست جونم.")
         return
     context.user_data["await"] = ("special", row)
     context.user_data["label"] = special["label"]
     await _edit(
         query,
-        f"🏆 *{special['label']}*\n\n✍️ جوابتو به‌صورت متن بفرست (مثلاً اسم یه تیم یا بازیکن).",
+        f"🏆 *{special['label']}*\n\n✍️ جوابتو بنویس بفرست (مثلاً اسم یه تیم یا یه بازیکن).",
     )
 
 
@@ -471,7 +471,7 @@ async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     matches = {m["row"]: m for m in await _run(sheet.matches)}
     specials = {s["row"]: s for s in await _run(sheet.specials)}
 
-    lines = [f"📋 *{a['name']}* جان، این‌ها پیش‌بینی‌های توئه 👇\n"]
+    lines = [f"📋 *{a['name']}* جون، اینا پیش‌بینیاته 👇\n"]
     if preds["matches"]:
         for row in sorted(preds["matches"]):
             m = matches.get(row)
@@ -481,11 +481,11 @@ async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
             res = ""
             if m["actual_home"] is not None:
                 actual = _score(m["actual_home"], m["actual_away"])
-                res = f"  (نتیجه‌ی واقعی: {actual})"
+                res = f"  (نتیجه‌ش شد: {actual})"
             score = _score(h, aw)
             lines.append(f"⚽️ {_team(m['home'])} {score} {_team(m['away'])}{res}")
     else:
-        lines.append("• هنوز هیچ بازی‌ای پیش‌بینی نکردی! 😴 برو پیش‌بینی کن تنبل‌خان 😏")
+        lines.append("• هنوز هیچی پیش‌بینی نکردی که! 😴 دِ پاشو یه چیزی بزن دیگه تنبل‌خان 😏")
     if preds["specials"]:
         lines.append("")
         for row in sorted(preds["specials"]):
@@ -497,11 +497,11 @@ async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Others' scores are private — admin only.
     if not _is_admin(update.effective_user.id):
-        await _say(update, "🔒 جدول فقط مال ادمینه! فضولی موقوف 😜")
+        await _say(update, "🔒 جدول فقط مال ادمینه جونم! فضولی نکن 😜")
         return
     board = await _run(_sheet(context).leaderboard)
     medals = {0: "🥇", 1: "🥈", 2: "🥉"}
-    lines = ["🏆📊 *جدول امتیازات* (لحظه‌ای و بی‌رحم! 😈)\n"]
+    lines = ["🏆📊 *جدول امتیازات* (زنده و بی‌رحم‌ها! 😈)\n"]
     for i, e in enumerate(board):
         total = int(e["total"]) if float(e["total"]).is_integer() else round(e["total"], 2)
         rank = medals.get(i, f"{_fa_num(i + 1)}.")
@@ -512,9 +512,9 @@ async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_matches(update: Update, context: ContextTypes.DEFAULT_TYPE):
     matches = await _run(_sheet(context).matches)
     if not matches:
-        await _say(update, "🤷 هنوز هیچ بازی‌ای ثبت نشده.")
+        await _say(update, "🤷 هنوز هیچ بازی‌ای ثبت نشده واللا.")
         return
-    lines = ["📅⚽️ *برنامه‌ی بازی‌ها*\n"]
+    lines = ["📅⚽️ *برنامه‌ی بازیا*\n"]
     for m in matches:
         if m["actual_home"] is not None:
             score = _score(m["actual_home"], m["actual_away"])
@@ -565,14 +565,14 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     a = store.get_assignment(update.effective_user.id)
     if not a:
         context.user_data.clear()
-        await _say(update, "😕 دیگه به هیچ اسمی وصل نیستی. با ادمین حرف بزن.")
+        await _say(update, "😕 دیگه به هیچ اسمی وصل نیستی واللا. برو با ادمین حرف بزن.")
         return
     label = context.user_data.get("label", "")
     await _run(_sheet(context).set_special_prediction, a["col"], row, text)
     context.user_data.clear()
     await _say(
         update,
-        f"✅ ثبت شد: {label}  →  *{_iso(text)}* 🎯\nانگار به خودت خیلی مطمئنی! 😎",
+        f"✅ ثبت شد: {label}  →  *{_iso(text)}* 🎯\nبه‌به، چه با اعتماد‌به‌نفس! 😎",
     )
 
 
@@ -618,9 +618,9 @@ async def cmd_assign(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=target,
             text=_rtl(
-                f"🎉🎊 تبریک *{slot['name']}*! ادمین تو رو به بازیِ پیش‌بینی جام جهانی ۲۰۲۶ اضافه کرد! ⚽️🔥\n\n"
+                f"🎉🎊 تبریک *{slot['name']}* جون! ادمین تو رو به مسابقه‌ی پیش‌بینی دوره نهم کتان ممپف اضافه کرد! ⚽️🔥\n\n"
                 "از الان می‌تونی پیش‌بینی کنی 😍\n"
-                "👇 دکمه‌ی «🎯 پیش‌بینی بازی» رو بزن، یا «❓ راهنما» رو برای آموزش."
+                "👇 دکمه‌ی «🎯 پیش‌بینی بازی» رو بزن، یا «❓ راهنما» رو واسه آموزش."
             ),
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=_main_kb(_is_admin(target)),
@@ -628,7 +628,7 @@ async def cmd_assign(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         notified = False
         logging.warning("Assign notify to %s failed: %s", target, e)
-    msg = f"✅🔗 آیدی {_iso(target)} به *{slot['name']}* وصل شد! خوش اومدی به جمع 🎉"
+    msg = f"✅🔗 آیدی {_iso(target)} به *{slot['name']}* وصل شد! خوش اومدی به جمعمون 🎉"
     if not notified:
         msg += "\n⚠️ ولی نتونستم بهش خبر بدم — باید اول خودش ربات رو /start کنه، بعد دوباره assign کن (یا بهش بگو استارت کنه)."
     await _say(update, msg)
@@ -777,20 +777,20 @@ def _reminder_text(window: int, name: str, home: str, away: str, kickoff) -> str
     when = _fmt_kickoff(kickoff)
     if window == 24:
         return _rtl(
-            f"⏳😴 {name} جان، ۲۴ ساعت مونده به {match} و تو هنوز پیش‌بینی نکردی!\n"
+            f"⏳😴 {name} جون، ۲۴ ساعت مونده به {match} و تو هنوز پیش‌بینی نکردی که!\n"
             f"🕐 سوت شروع: {when}\n"
-            "نکنه قراره غافلگیرمون کنی؟ 🤨 بزن بریم 👉 «🎯 پیش‌بینی بازی»"
+            "نکنه می‌خوای غافلگیرمون کنی؟ 🤨 دِ بیو بزن 👉 «🎯 پیش‌بینی بازی»"
         )
     if window == 3:
         return _rtl(
-            f"🚨🔥 آژیر قرمز {name}! فقط ۳ ساعت تا {match} مونده و پیش‌بینیت هنوز خالیه! 😱\n"
+            f"🚨🔥 آژیر قرمز {name}! فقط ۳ ساعت مونده به {match} و هنوز خبری از پیش‌بینیت نی! 😱\n"
             f"🕐 سوت شروع: {when}\n"
-            "دست بجنبون قهرمان 🏃‍♂️💨 «🎯 پیش‌بینی بازی»"
+            "دِ بجمب دیگه قهرمان 🏃‍♂️💨 «🎯 پیش‌بینی بازی»"
         )
     return _rtl(
-        f"⏰😭 آخرین هشدار {name}! یه ساعت بیشتر نمونده تا {match}!\n"
+        f"⏰😭 آخرین هشدار {name}! یه ساعتم نمونده به {match}!\n"
         f"🕐 سوت شروع: {when}\n"
-        "الان نزنی بعداً اشک تمساح نریز ها 🐊 «🎯 پیش‌بینی بازی»"
+        "الان نزنی بعداً غصه نخوری‌ها 🐊 «🎯 پیش‌بینی بازی»"
     )
 
 
