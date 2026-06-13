@@ -79,6 +79,16 @@ def _team(name: str) -> str:
     return _iso(_team_fa(name))
 
 
+def _score(home, away) -> str:
+    """A 'home - away' score that reads correctly in an RTL line.
+
+    Must be SPACED and NOT isolated: a contiguous '0-2' gets bidi-reversed to
+    '2-0' next to Farsi team names, but spaced digits flow right-to-left so each
+    number lines up with its own team.
+    """
+    return _fa_num(f"{home} - {away}")
+
+
 def _rtl(text: str) -> str:
     """Force every line to RTL base direction."""
     return "\n".join(RLM + ln for ln in text.split("\n"))
@@ -426,7 +436,7 @@ async def stepper_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("ذخیره شد ✅🔥")
     await _edit(
         query,
-        f"✅ ثبت شد: {_team(home_name)} *{_iso(_fa_num(f'{home}-{away}'))}* {_team(away_name)} 🎯\n"
+        f"✅ ثبت شد: {_team(home_name)} *{_score(home, away)}* {_team(away_name)} 🎯\n"
         "به امید درست از آب دراومدن! 🤞",
     )
 
@@ -470,9 +480,9 @@ async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
             h, aw = preds["matches"][row]
             res = ""
             if m["actual_home"] is not None:
-                actual = _iso(_fa_num(f"{m['actual_home']}-{m['actual_away']}"))
+                actual = _score(m["actual_home"], m["actual_away"])
                 res = f"  (نتیجه‌ی واقعی: {actual})"
-            score = _iso(_fa_num(f"{h}-{aw}"))
+            score = _score(h, aw)
             lines.append(f"⚽️ {_team(m['home'])} {score} {_team(m['away'])}{res}")
     else:
         lines.append("• هنوز هیچ بازی‌ای پیش‌بینی نکردی! 😴 برو پیش‌بینی کن تنبل‌خان 😏")
@@ -507,7 +517,7 @@ async def cmd_matches(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["📅⚽️ *برنامه‌ی بازی‌ها*\n"]
     for m in matches:
         if m["actual_home"] is not None:
-            score = _iso(_fa_num(f"{m['actual_home']}-{m['actual_away']}"))
+            score = _score(m["actual_home"], m["actual_away"])
             lines.append(f"✅ {_team(m['home'])} *{score}* {_team(m['away'])}")
         elif m["open"]:
             when = f"  ⏰{_fmt_kickoff(m['kickoff'])}" if m["kickoff"] else ""
