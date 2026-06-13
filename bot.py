@@ -246,11 +246,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         msg = (
             "👋🌍 خوش اومدی به مسابقه‌ی پیش‌بینیِ دوره نهم کتان ممپف! 🎉⚽️\n\n"
-            "فعلاً به هیچ اسمی وصل نیستی، یه غریبه‌ی نازنین 😎\n"
-            "این اطلاعاتو وردار بفرست برا ادمین تا اضافه‌ت کنه:\n\n"
+            "فعلاً به هیچ اسمی وصل نیستی، یه غریبه‌ی نازنین 😎\n\n"
+            "👈 برای ثبت‌نام، دکمه‌ی «🆔 من کی‌ام؟» رو بزن و آیدیت رو برای *آریا (کمیته آنالیز)* بفرست تا وصلت کنه.\n\n"
             f"`id={user.id}`  name=`{user.full_name}`"
-            f"{'  `@' + user.username + '`' if user.username else ''}\n\n"
-            "💡 این پیامو برا ادمین فوروارد کن، یا هر وقت خواستی دکمه‌ی «🆔 من کی‌ام؟» رو بزن."
+            f"{'  `@' + user.username + '`' if user.username else ''}"
         )
     is_admin = _is_admin(user.id)
     await _say(update, msg, reply_markup=_main_kb(is_admin))
@@ -274,6 +273,8 @@ async def cmd_whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
         + (f" (`@{user.username}`)" if user.username else ""),
     ]
     lines.append(f"🔗 وصل به اسم: *{a['name']}*" if a else "🔗 وصل به اسم: _هنوز هیشکی واللا! 🤷_")
+    if not a:
+        lines.append("\n👉 همین عدد بالا رو برای *آریا (کمیته آنالیز)* بفرست، یا همین پیامو براش فوروارد کن تا ثبت‌نامت کنه. 🙏")
     if _is_admin(user.id):
         lines.append("👑 نقش: *ادمین* (آقا بالاسر! 😎)")
     await _say(update, "\n".join(lines), reply_markup=_main_kb(_is_admin(user.id)))
