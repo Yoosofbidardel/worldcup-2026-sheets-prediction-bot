@@ -50,14 +50,15 @@ SLOT_STRIDE = 3
 MATCH_FIRST_ROW = 3
 MATCH_LAST_ROW = 69
 
-# Column that stores each match's kickoff time (ISO-8601 UTC). It sits past every
-# prediction block (just after the ROBOT column) so it never collides with them.
-# The API job fills empty cells here; the admin can hand-edit any cell to override.
-KICKOFF_COL = 74  # column BV
+# Column that stores each match's kickoff time (ISO-8601 UTC). It MUST sit past
+# every prediction block (and the ROBOT block), otherwise it collides with a
+# player's column. Default 74 (col BV) suits ~20 players; override per-deployment
+# via env for bigger leagues (e.g. 33 players -> set KICKOFF_COL=114).
+KICKOFF_COL = int(os.getenv("KICKOFF_COL", "74"))
 KICKOFF_HEADER = "Kickoff (UTC)"
 
 # Names that are not real participants and must never be assigned to a person.
-EXCLUDED_NAMES = {"ROBOT"}
+EXCLUDED_NAMES = {"ROBOT", "Kickoff (UTC)"}
 
 # Special predictions: row -> (label, points). The prediction text goes in the
 # participant's FIRST block column; the actual answer is entered by the admin in C.
