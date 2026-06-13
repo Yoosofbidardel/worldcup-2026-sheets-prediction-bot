@@ -1,11 +1,11 @@
 # Deploy & CI/CD
 
-Push to `main` → GitHub Actions copies the code to your server and restarts the
+Push to `aria` → GitHub Actions copies the code to your server and restarts the
 bot. Secrets (`.env`, `service_account.json`) live **only** on the server and
 your PC — never in git.
 
 ```
-your PC ── git push ──► GitHub ── Actions (rsync + restart) ──► server runs the bot 24/7
+your PC ── git push (aria) ──► GitHub ── Actions (rsync + restart) ──► server runs the bot 24/7
 ```
 
 ## One-time setup (≈10 minutes)
@@ -31,7 +31,7 @@ ssh-keygen -t ed25519 -f wc2026_deploy -N "" -C "github-deploy"
 
 ### 3. Bootstrap the server (run once, as root)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Yoosofbidardel/worldcup-2026-sheets-prediction-bot/main/deploy/setup-server.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Yoosofbidardel/worldcup-2026-sheets-prediction-bot/aria/deploy/setup-server.sh | bash
 ```
 Then add your secrets on the server:
 ```bash
@@ -55,7 +55,7 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 > after saving, even by you.
 
 ### 5. Deploy
-Push to `main` (or **Actions → Deploy to server → Run workflow**). It will:
+Push to `aria` (or **Actions → Deploy to server → Run workflow**). It will:
 rsync the code → install deps → restart the service. Verify on the server:
 ```bash
 systemctl status wc2026

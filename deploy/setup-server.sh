@@ -4,7 +4,7 @@
 # Run this ONCE on a fresh Ubuntu/Debian server (as root). After it finishes,
 # GitHub Actions will keep the code updated on every push to main.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Yoosofbidardel/worldcup-2026-sheets-prediction-bot/main/deploy/setup-server.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Yoosofbidardel/worldcup-2026-sheets-prediction-bot/aria/deploy/setup-server.sh | bash
 #   # ...or copy this file up and: bash setup-server.sh
 #
 # Override defaults with env vars, e.g.:

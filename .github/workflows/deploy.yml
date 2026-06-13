@@ -1,14 +1,14 @@
 name: Deploy to server
 
-# Auto-deploy on every push to main. You can also trigger it manually from the
-# Actions tab (workflow_dispatch).
+# Auto-deploy on every push to the aria branch. You can also trigger it manually
+# from the Actions tab (workflow_dispatch).
 on:
   push:
-    branches: [main]
+    branches: [aria]
   workflow_dispatch:
 
 concurrency:
-  group: deploy-main
+  group: deploy-aria
   cancel-in-progress: true
 
 jobs:
