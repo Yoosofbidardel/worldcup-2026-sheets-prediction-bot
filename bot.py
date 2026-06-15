@@ -14,7 +14,7 @@ and dates are shown in both the Jalali (Shamsi) and Gregorian calendars.
 """
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import jdatetime
@@ -1044,6 +1044,31 @@ async def group_announce_job(context: ContextTypes.DEFAULT_TYPE):
                 posted = False
         if posted:  # mark either way (silently when auto is off) to avoid a backlog
             store.set_announced(list(announced | set(finished.keys())))
+
+
+# ── Daily 9am: the next 24 hours' fixtures ────────────────────────────────
+async def daily_fixtures_job(context: ContextTypes.DEFAULT_TYPE):
+    """Each morning, post the matches kicking off in the next 24h to the group."""
+    gid = store.get_group_id()
+    if not gid:
+        return
+    now = datetime.now(timezone.utc)
+    horizon = now + timedelta(hours=24)
+    upcoming = [
+        m for m in await _run(_sheet(context).matches)
+        if m["kickoff"] and now < m["kickoff"] <= horizon and m["actual_home"] is None
+    ]
+    if not upcoming:
+        return
+    upcoming.sort(key=lambda m: m["kickoff"])
+    lines = ["☀️ *بازی‌های ۲۴ ساعتِ آینده* ⚽️\n"]
+    for m in upcoming:
+        lines.append(f"⚽️ {_team(m['home'])} 🆚 {_team(m['away'])}  ⏰ {_fmt_kickoff(m['kickoff'])}")
+    lines.append("\n⏳ یادتون نره پیش‌بینی‌هاتونو ثبت کنید! 🎯")
+    try:
+        await context.bot.send_message(chat_id=gid, text=_rtl("\n".join(lines)), parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        logging.warning("Daily fixtures post failed: %s", e)
 
 
 # ── Admin on-demand controls ──────────────────────────────────────────────

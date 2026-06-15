@@ -1,9 +1,12 @@
 import logging
+from datetime import time as dtime
+from zoneinfo import ZoneInfo
 
 from telegram.ext import Application
 
 import bot
 from config import (
+    ANALYSIS_HOUR_TEHRAN,
     ANNOUNCE_CHECK_MINUTES,
     FOOTBALL_API_KEY,
     GOOGLE_SHEET_ID,
@@ -71,6 +74,13 @@ def main():
             first=12,
         )
         logging.info("Group announce: 15-min fallback + exact-kickoff timers.")
+
+        # Each morning at 09:00 Tehran: post the next 24h fixtures to the group.
+        app.job_queue.run_daily(
+            bot.daily_fixtures_job,
+            time=dtime(hour=ANALYSIS_HOUR_TEHRAN, minute=0, tzinfo=ZoneInfo("Asia/Tehran")),
+        )
+        logging.info("Daily fixtures post at %02d:00 Tehran.", ANALYSIS_HOUR_TEHRAN)
 
     logging.info("Bot started. Polling…")
     app.run_polling()
