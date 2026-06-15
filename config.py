@@ -83,3 +83,12 @@ REMINDERS_FILE = os.path.join(os.path.dirname(__file__), "reminders_sent.json")
 
 # Tracks which users have already seen the first-time guide (so it shows once).
 SEEN_FILE = os.path.join(os.path.dirname(__file__), "seen_intro.json")
+
+# ── Group announcements (daily analysis call + post-match leaderboard) ────
+# Stores the main-group chat id, the daily totals snapshot, and which finished
+# matches were already announced.
+ANNOUNCE_FILE = os.path.join(os.path.dirname(__file__), "announce.json")
+# Daily "yesterday's top scorers" call fires at this hour, Tehran time.
+ANALYSIS_HOUR_TEHRAN = int(os.getenv("ANALYSIS_HOUR_TEHRAN", "9"))
+# How often to check for newly-finished matches to post the leaderboard (minutes).
+ANNOUNCE_CHECK_MINUTES = float(os.getenv("ANNOUNCE_CHECK_MINUTES", "15"))

@@ -106,6 +106,32 @@ def _fmt_kickoff(dt) -> str:
     return _iso(f"{shamsi} ({greg}) ⏰ {clock}")
 
 
+_MEDALS = {0: "🥇", 1: "🥈", 2: "🥉"}
+
+
+def _fmt_total(t) -> str:
+    """Points like 47.5 / 47 (two decimals, trailing zeros trimmed), Persian digits."""
+    return _fa_num(f"{float(t):.2f}".rstrip("0").rstrip("."))
+
+
+def _leaderboard_lines(standings, header: str) -> str:
+    lines = [header]
+    for i, e in enumerate(standings):
+        rank = _MEDALS.get(i, f"{_fa_num(i + 1)}.")
+        lines.append(f"{rank} {e['name']} — *{_iso(_fmt_total(e['total']))}*")
+    return "\n".join(lines)
+
+
+def _col_uid_map() -> dict:
+    """slot column -> linked telegram user id (for tagging in the group)."""
+    return {info["col"]: uid for uid, info in store.all_assignments().items()}
+
+
+def _mention(name: str, uid) -> str:
+    """A clickable Telegram mention by id (works without a username)."""
+    return f"[{name}](tg://user?id={uid})" if uid else name
+
+
 def _sheet(context):
     return context.application.bot_data["sheet"]
 
@@ -495,18 +521,12 @@ async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Others' scores are private — admin only.
+    # Others' scores are private — admin only (but posted publicly in the group).
     if not _is_admin(update.effective_user.id):
         await _say(update, "🔒 جدول فقط مال ادمینه! فضولی موقوف 😜")
         return
-    board = await _run(_sheet(context).leaderboard)
-    medals = {0: "🥇", 1: "🥈", 2: "🥉"}
-    lines = ["🏆📊 *جدول امتیازات* (لحظه‌ای و بی‌رحم! 😈)\n"]
-    for i, e in enumerate(board):
-        total = f"{float(e['total']):.2f}".rstrip("0").rstrip(".")  # 47.50→47.5, 47.00→47
-        rank = medals.get(i, f"{_fa_num(i + 1)}.")
-        lines.append(f"{rank} {e['name']} — *{_iso(_fa_num(total))}*")
-    await _say(update, "\n".join(lines))
+    standings = await _run(_sheet(context).standings)
+    await _say(update, _leaderboard_lines(standings, "🏆📊 *جدول امتیازات* (لحظه‌ای و بی‌رحم! 😈)\n"))
 
 
 async def cmd_matches(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -845,6 +865,86 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
         logging.info("Sent %d reminder(s).", sent)
 
 
+# ── Group announcements: post-match leaderboard + predictions at kickoff ──
+async def cmd_setgroup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin runs this INSIDE the main group to register it for announcements."""
+    if not _is_admin(update.effective_user.id):
+        return
+    chat = update.effective_chat
+    if chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("⚠️ این دستورو باید داخل خودِ گروهِ اصلی بزنی.")
+        return
+    sheet = _sheet(context)
+    standings = await _run(sheet.standings)
+    matches = await _run(sheet.matches)
+    finished = [m["row"] for m in matches if m["actual_home"] is not None]
+    started = [m["row"] for m in matches if m["started"]]
+    # baseline now so we don't dump a backlog of already started/finished matches.
+    store.init_announce(chat.id, {str(e["col"]): e["total"] for e in standings}, finished, started)
+    await update.message.reply_text(
+        "✅ این گروه ثبت شد!\n"
+        "• بعد از شروعِ هر بازی، پیش‌بینیِ همه برای اون بازی این‌جا اعلام می‌شه. 🔒\n"
+        "• بعد از پایانِ هر بازی هم جدول این‌جا منتشر می‌شه. 🏁"
+    )
+
+
+async def group_announce_job(context: ContextTypes.DEFAULT_TYPE):
+    """On each check: post everyone's predictions for newly STARTED matches, and
+    post the updated leaderboard for newly FINISHED matches."""
+    gid = store.get_group_id()
+    if not gid:
+        return
+    sheet = _sheet(context)
+    matches = await _run(sheet.matches)
+
+    # 1) Newly STARTED (kickoff passed) -> reveal everyone's predictions.
+    started_seen = store.get_started()
+    new_started = sorted(
+        [m for m in matches if m["started"] and m["row"] not in started_seen],
+        key=lambda x: x["row"],
+    )
+    for m in new_started:
+        preds = await _run(sheet.match_all_predictions, m["row"])
+        head = (
+            "🔒 بازی شروع شد و پیش‌بینی‌ها قفل شد!\n"
+            f"⚽️ *{_team(m['home'])}* 🆚 *{_team(m['away'])}*\n\n"
+            "📋 پیش‌بینیِ همه:"
+        )
+        if preds:
+            rows = [f"• {p['name']}: {_score(p['home'], p['away'])}" for p in preds]
+        else:
+            rows = ["• هیچکس برای این بازی پیش‌بینی نکرده بود! 😅"]
+        try:
+            await context.bot.send_message(
+                chat_id=gid, text=_rtl(head + "\n" + "\n".join(rows)), parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception as e:
+            logging.warning("Kickoff predictions post failed (row %s): %s", m["row"], e)
+    if new_started:
+        store.set_started(list(started_seen | {m["row"] for m in new_started}))
+
+    # 2) Newly FINISHED (result entered) -> post the updated leaderboard.
+    finished = {m["row"]: m for m in matches if m["actual_home"] is not None}
+    announced = store.get_announced()
+    new_finished = [r for r in finished if r not in announced]
+    if new_finished:
+        standings = await _run(sheet.standings)
+        fin = "\n".join(
+            f"✅ {_team(finished[r]['home'])} "
+            f"*{_score(finished[r]['actual_home'], finished[r]['actual_away'])}* "
+            f"{_team(finished[r]['away'])}"
+            for r in sorted(new_finished)
+        )
+        body = _leaderboard_lines(standings, "📊 *جدول به‌روز شد:*\n")
+        try:
+            await context.bot.send_message(
+                chat_id=gid, text=_rtl(f"🏁 بازی تموم شد!\n{fin}\n\n{body}"), parse_mode=ParseMode.MARKDOWN
+            )
+            store.set_announced(list(announced | set(finished.keys())))
+        except Exception as e:
+            logging.warning("Match-end leaderboard post failed: %s", e)
+
+
 def register(app: Application):
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
@@ -860,6 +960,7 @@ def register(app: Application):
     app.add_handler(CommandHandler("unassign", cmd_unassign))
     app.add_handler(CommandHandler("assignments", cmd_assignments))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
+    app.add_handler(CommandHandler("setgroup", cmd_setgroup))
     app.add_handler(CommandHandler("synckickoffs", cmd_synckickoffs))
     app.add_handler(CommandHandler("syncresults", cmd_syncresults))
     # interactive

@@ -207,6 +207,34 @@ class SheetClient:
                 out.add(r)
         return out
 
+    def match_all_predictions(self, row: int) -> list[dict]:
+        """Every participant's prediction for one match row: [{name, home, away}]
+        for slots that filled both cells. Reads the whole row in one call."""
+        slots = self.slots()
+        if not slots:
+            return []
+        last_col = max(s["col"] + 1 for s in slots)
+        last_letter = rowcol_to_a1(1, last_col)[:-1]
+        with self._lock:
+            got = self._ws.get(f"A{row}:{last_letter}{row}", value_render_option="UNFORMATTED_VALUE")
+        rowvals = got[0] if got else []
+
+        def cell(c):
+            return rowvals[c - 1] if c - 1 < len(rowvals) else None
+
+        def as_int(v):
+            try:
+                return int(float(v))
+            except (TypeError, ValueError):
+                return v
+
+        out = []
+        for s in slots:
+            h, a = cell(s["col"]), cell(s["col"] + 1)
+            if not _blank(h) and not _blank(a):
+                out.append({"name": s["name"], "home": as_int(h), "away": as_int(a)})
+        return out
+
     def match_prediction(self, base_col: int, row: int) -> tuple:
         """Current (home, away) prediction for one player+match, ints or (None, None)."""
         home_letter = rowcol_to_a1(1, base_col)[:-1]
@@ -291,8 +319,10 @@ class SheetClient:
             scored.append(f"{m['home']} {home_goals}-{away_goals} {m['away']}")
         return {"written": written, "scored": scored}
 
-    # ── Leaderboard (totals are computed live by the sheet) ──────────────
-    def leaderboard(self) -> list[dict]:
+    # ── Leaderboard / standings (totals are computed live by the sheet) ──
+    def standings(self) -> list[dict]:
+        """Like leaderboard() but also carries each slot's column, so callers
+        can map a name back to its assigned Telegram user."""
         with self._lock:
             totals = self._ws.row_values(TOTAL_ROW, value_render_option="UNFORMATTED_VALUE")
         board = []
@@ -303,6 +333,9 @@ class SheetClient:
                 total = float(total)
             except (TypeError, ValueError):
                 total = 0.0
-            board.append({"name": s["name"], "total": total})
+            board.append({"name": s["name"], "col": col, "total": total})
         board.sort(key=lambda x: x["total"], reverse=True)
         return board
+
+    def leaderboard(self) -> list[dict]:
+        return [{"name": e["name"], "total": e["total"]} for e in self.standings()]

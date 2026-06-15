@@ -4,6 +4,7 @@ from telegram.ext import Application
 
 import bot
 from config import (
+    ANNOUNCE_CHECK_MINUTES,
     FOOTBALL_API_KEY,
     GOOGLE_SHEET_ID,
     KICKOFF_REFRESH_HOURS,
@@ -55,6 +56,15 @@ def main():
             first=15,
         )
         logging.info("Reminder check scheduled every %.0f min.", REMINDER_CHECK_MINUTES)
+
+        # Group posts: predictions when a match starts, leaderboard when it ends.
+        # (Needs /setgroup run in the main group first.)
+        app.job_queue.run_repeating(
+            bot.group_announce_job,
+            interval=ANNOUNCE_CHECK_MINUTES * 60,
+            first=45,
+        )
+        logging.info("Group announce check every %.0f min.", ANNOUNCE_CHECK_MINUTES)
 
     logging.info("Bot started. Polling…")
     app.run_polling()

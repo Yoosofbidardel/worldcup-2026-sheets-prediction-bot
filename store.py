@@ -8,11 +8,12 @@ import json
 import os
 import threading
 
-from config import ASSIGNMENTS_FILE, REMINDERS_FILE, SEEN_FILE
+from config import ANNOUNCE_FILE, ASSIGNMENTS_FILE, REMINDERS_FILE, SEEN_FILE
 
 _lock = threading.Lock()
 _rem_lock = threading.Lock()
 _seen_lock = threading.Lock()
+_ann_lock = threading.Lock()
 
 
 def _load() -> dict:
@@ -126,3 +127,74 @@ def mark_seen_intro(user_id: int):
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp, SEEN_FILE)
+
+
+# ── Group announcements state ────────────────────────────────────────────
+def _load_announce() -> dict:
+    base = {"group_id": None, "snapshot": {}, "announced": [], "started": []}
+    if not os.path.exists(ANNOUNCE_FILE):
+        return base
+    try:
+        with open(ANNOUNCE_FILE, encoding="utf-8") as f:
+            base.update(json.load(f))
+    except (ValueError, OSError):
+        pass
+    return base
+
+
+def _save_announce(data: dict):
+    tmp = ANNOUNCE_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, ANNOUNCE_FILE)
+
+
+def get_group_id():
+    return _load_announce().get("group_id")
+
+
+def get_snapshot() -> dict:
+    return _load_announce().get("snapshot", {})
+
+
+def set_snapshot(snapshot: dict):
+    with _ann_lock:
+        data = _load_announce()
+        data["snapshot"] = snapshot
+        _save_announce(data)
+
+
+def get_announced() -> set:
+    return set(_load_announce().get("announced", []))
+
+
+def set_announced(rows):
+    with _ann_lock:
+        data = _load_announce()
+        data["announced"] = sorted(set(int(r) for r in rows))
+        _save_announce(data)
+
+
+def get_started() -> set:
+    return set(_load_announce().get("started", []))
+
+
+def set_started(rows):
+    with _ann_lock:
+        data = _load_announce()
+        data["started"] = sorted(set(int(r) for r in rows))
+        _save_announce(data)
+
+
+def init_announce(group_id: int, snapshot: dict, announced, started):
+    """Register the group and baseline already-finished + already-started matches
+    (so we don't dump a backlog of past matches when the group is first set)."""
+    with _ann_lock:
+        _save_announce(
+            {
+                "group_id": group_id,
+                "snapshot": snapshot,
+                "announced": sorted(set(int(r) for r in announced)),
+                "started": sorted(set(int(r) for r in started)),
+            }
+        )
