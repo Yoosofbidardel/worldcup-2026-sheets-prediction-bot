@@ -51,6 +51,10 @@ BTN_LEADERBOARD = "📊 جدول امتیازات"  # admin only
 BTN_BROADCAST = "📢 پیام به همه"  # admin only
 BTN_WHOAMI = "🆔 من کی‌ام؟"
 BTN_HELP = "❓ راهنما"
+# admin-only
+BTN_SEND_TABLE = "📤 ارسال جدول"
+BTN_SEND_PREDS = "📤 ارسال پیش‌بینی‌ها"
+BTN_TOGGLE_AUTO = "⚙️ ارسال خودکار نتایج"
 
 # ── Bidi helpers (keep the layout stable when Latin text appears) ─────────
 RLM = "‏"  # right-to-left mark — forces RTL base direction on a line
@@ -148,6 +152,8 @@ def _main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
     ]
     if is_admin:  # leaderboard (others' scores) + broadcast are admin-only
         rows.append([KeyboardButton(BTN_LEADERBOARD), KeyboardButton(BTN_BROADCAST)])
+        rows.append([KeyboardButton(BTN_SEND_TABLE), KeyboardButton(BTN_SEND_PREDS)])
+        rows.append([KeyboardButton(BTN_TOGGLE_AUTO)])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
@@ -183,6 +189,9 @@ ADMIN_GUIDE = (
     "👑 *مخصوص ادمین*\n"
     "• «📢 پیام به همه» — یه پیام بده به همه‌ی بچه‌ها.\n"
     "• «📊 جدول امتیازات» — جدولو ببین (فقط خودت می‌بینی).\n"
+    "• «📤 ارسال جدول» — جدولو همین‌جا (گروه یا پیوی) بفرست.\n"
+    "• «📤 ارسال پیش‌بینی‌ها» — پیش‌بینیِ یه بازی رو همین‌جا بفرست.\n"
+    "• «⚙️ ارسال خودکار نتایج» — ارسالِ خودکارِ جدولِ بعد از بازی رو روشن/خاموش کن.\n"
     "• `/slots` و `/assign <idx> <id>` — وصل کردن آدما به اسما.\n"
     "• `/assignments` و `/unassign <id>` — مدیریت اتصالا.\n"
     "• `/synckickoffs` — گرفتن زمان شروع بازیا از API.\n"
@@ -570,6 +579,12 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await cmd_help(update, context)
     if text == BTN_BROADCAST:
         return await cmd_broadcast(update, context)
+    if text == BTN_SEND_TABLE:
+        return await cmd_send_table(update, context)
+    if text == BTN_SEND_PREDS:
+        return await cmd_send_preds(update, context)
+    if text == BTN_TOGGLE_AUTO:
+        return await cmd_toggle_auto(update, context)
 
     pending = context.user_data.get("await")
     # Admin is composing a broadcast: this text is the message to send to everyone.
@@ -925,12 +940,9 @@ async def daily_analysis_job(context: ContextTypes.DEFAULT_TYPE):
         logging.warning("Daily analysis post failed: %s", e)
 
 
-async def _post_match_predictions(context, m) -> bool:
-    """Post everyone's predictions for one match to the group — with team names so
-    each score is unambiguous. Marks it announced; returns True if it posted."""
-    gid = store.get_group_id()
-    if not gid or m["row"] in store.get_started():
-        return False
+async def _match_predictions_text(context, m) -> str:
+    """The 'predictions are locked' message for one match, with team names so each
+    score is unambiguous."""
     preds = await _run(_sheet(context).match_all_predictions, m["row"])
     head = (
         f"⏰🔒 مهلتِ ارسالِ پیش‌بینیِ بازیِ *{_team(m['home'])}* 🆚 *{_team(m['away'])}* به پایان رسید!\n\n"
@@ -943,9 +955,17 @@ async def _post_match_predictions(context, m) -> bool:
         ]
     else:
         rows = ["• هیچکس برای این بازی پیش‌بینی نکرده بود! 😅"]
+    return head + "\n" + "\n".join(rows)
+
+
+async def _post_match_predictions(context, m) -> bool:
+    """Auto-post predictions to the group (deduped via the 'started' set)."""
+    gid = store.get_group_id()
+    if not gid or m["row"] in store.get_started():
+        return False
     try:
         await context.bot.send_message(
-            chat_id=gid, text=_rtl(head + "\n" + "\n".join(rows)), parse_mode=ParseMode.MARKDOWN
+            chat_id=gid, text=_rtl(await _match_predictions_text(context, m)), parse_mode=ParseMode.MARKDOWN
         )
         store.set_started(list(store.get_started() | {m["row"]}))
         return True
@@ -1000,26 +1020,87 @@ async def group_announce_job(context: ContextTypes.DEFAULT_TYPE):
         if m["row"] not in store.get_started():
             await _post_match_predictions(context, m)
 
-    # 2) Newly FINISHED (result entered) -> post the updated leaderboard.
+    # 2) Newly FINISHED (result entered) -> post the leaderboard (if auto is on).
     finished = {m["row"]: m for m in matches if m["actual_home"] is not None}
     announced = store.get_announced()
     new_finished = [r for r in finished if r not in announced]
     if new_finished:
-        standings = await _run(sheet.standings)
-        fin = "\n".join(
-            f"✅ {_team(finished[r]['home'])} "
-            f"*{_score(finished[r]['actual_home'], finished[r]['actual_away'])}* "
-            f"{_team(finished[r]['away'])}"
-            for r in sorted(new_finished)
-        )
-        body = _leaderboard_lines(standings, "📊 *جدول به‌روز شد:*\n")
-        try:
-            await context.bot.send_message(
-                chat_id=gid, text=_rtl(f"🏁 بازی تموم شد!\n{fin}\n\n{body}"), parse_mode=ParseMode.MARKDOWN
+        posted = True
+        if store.get_auto_leaderboard():
+            standings = await _run(sheet.standings)
+            fin = "\n".join(
+                f"✅ {_team(finished[r]['home'])} "
+                f"*{_score(finished[r]['actual_home'], finished[r]['actual_away'])}* "
+                f"{_team(finished[r]['away'])}"
+                for r in sorted(new_finished)
             )
+            body = _leaderboard_lines(standings, "📊 *جدول به‌روز شد:*\n")
+            try:
+                await context.bot.send_message(
+                    chat_id=gid, text=_rtl(f"🏁 بازی تموم شد!\n{fin}\n\n{body}"), parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e:
+                logging.warning("Match-end leaderboard post failed: %s", e)
+                posted = False
+        if posted:  # mark either way (silently when auto is off) to avoid a backlog
             store.set_announced(list(announced | set(finished.keys())))
-        except Exception as e:
-            logging.warning("Match-end leaderboard post failed: %s", e)
+
+
+# ── Admin on-demand controls ──────────────────────────────────────────────
+async def cmd_send_table(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send the leaderboard to wherever the admin ran it (group or private)."""
+    if not _is_admin(update.effective_user.id):
+        return
+    standings = await _run(_sheet(context).standings)
+    await _say(update, _leaderboard_lines(standings, "🏆📊 *جدول امتیازات*\n"))
+
+
+async def cmd_send_preds(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin picks a started match; its predictions are posted to this same chat."""
+    if not _is_admin(update.effective_user.id):
+        return
+    started = [m for m in await _run(_sheet(context).matches) if m["started"]]
+    if not started:
+        await _say(update, "هنوز هیچ بازی‌ای شروع نشده که پیش‌بینی‌هاش رو بفرستم.")
+        return
+    started.sort(key=lambda m: m["kickoff"], reverse=True)
+    buttons = [
+        [InlineKeyboardButton(f"{_team(m['home'])} 🆚 {_team(m['away'])}", callback_data=f"spsend:{m['row']}")]
+        for m in started[:10]
+    ]
+    await _say(update, "کدوم بازی؟ پیش‌بینی‌هاش رو همین‌جا می‌فرستم 👇", reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def send_preds_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not _is_admin(update.effective_user.id):
+        await query.answer()
+        return
+    await query.answer()
+    row = int(query.data.split(":")[1])
+    m = next((x for x in await _run(_sheet(context).matches) if x["row"] == row), None)
+    if not m:
+        await _edit(query, "بازی پیدا نشد.")
+        return
+    text = await _match_predictions_text(context, m)
+    await context.bot.send_message(chat_id=query.message.chat_id, text=_rtl(text), parse_mode=ParseMode.MARKDOWN)
+    await _edit(query, f"✅ پیش‌بینی‌های بازیِ *{_team(m['home'])}* 🆚 *{_team(m['away'])}* فرستاده شد.")
+
+
+async def cmd_toggle_auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle the automatic post-match leaderboard on/off."""
+    if not _is_admin(update.effective_user.id):
+        return
+    new = not store.get_auto_leaderboard()
+    store.set_auto_leaderboard(new)
+    if new:
+        await _say(update, "✅ ارسالِ خودکارِ جدول بعد از هر بازی *روشن* شد.")
+    else:
+        await _say(
+            update,
+            "⏸️ ارسالِ خودکارِ جدول *خاموش* شد.\n"
+            "از این به بعد هر وقت خواستی، دستی با «📤 ارسال جدول» بفرست.",
+        )
 
 
 def register(app: Application):
@@ -1038,9 +1119,13 @@ def register(app: Application):
     app.add_handler(CommandHandler("assignments", cmd_assignments))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CommandHandler("setgroup", cmd_setgroup))
+    app.add_handler(CommandHandler("sendtable", cmd_send_table))
+    app.add_handler(CommandHandler("sendpreds", cmd_send_preds))
+    app.add_handler(CommandHandler("autoresults", cmd_toggle_auto))
     app.add_handler(CommandHandler("synckickoffs", cmd_synckickoffs))
     app.add_handler(CommandHandler("syncresults", cmd_syncresults))
     # interactive
+    app.add_handler(CallbackQueryHandler(send_preds_choice, pattern=r"^spsend:\d+$"))
     app.add_handler(CallbackQueryHandler(predict_page, pattern=r"^ppage:\d+$"))
     app.add_handler(CallbackQueryHandler(open_stepper, pattern=r"^pick:\d+$"))
     app.add_handler(CallbackQueryHandler(stepper_action, pattern=r"^sp:"))

@@ -131,7 +131,7 @@ def mark_seen_intro(user_id: int):
 
 # ── Group announcements state ────────────────────────────────────────────
 def _load_announce() -> dict:
-    base = {"group_id": None, "snapshot": {}, "announced": [], "started": []}
+    base = {"group_id": None, "snapshot": {}, "announced": [], "started": [], "auto_leaderboard": True}
     if not os.path.exists(ANNOUNCE_FILE):
         return base
     try:
@@ -183,6 +183,17 @@ def set_started(rows):
     with _ann_lock:
         data = _load_announce()
         data["started"] = sorted(set(int(r) for r in rows))
+        _save_announce(data)
+
+
+def get_auto_leaderboard() -> bool:
+    return bool(_load_announce().get("auto_leaderboard", True))
+
+
+def set_auto_leaderboard(on: bool):
+    with _ann_lock:
+        data = _load_announce()
+        data["auto_leaderboard"] = bool(on)
         _save_announce(data)
 
 
