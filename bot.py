@@ -980,12 +980,18 @@ async def reschedule_kickoffs_job(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def group_announce_job(context: ContextTypes.DEFAULT_TYPE):
-    """Fallback poll (every 15 min): post predictions for any started match the
-    exact-kickoff timer missed (e.g. bot was down), and the leaderboard for newly
-    finished matches."""
+    """Every 15 min: pull just-finished results from the API into the sheet, post
+    predictions for any started match the exact-kickoff timer missed, and post the
+    leaderboard for newly finished matches."""
     gid = store.get_group_id()
     if not gid:
         return
+    # First, write any newly-finished results into the sheet, so the leaderboard
+    # below already reflects games that just ended (no waiting for the hourly job).
+    try:
+        await _sync_results(context)
+    except Exception as e:
+        logging.warning("Announce results sync failed: %s", e)
     sheet = _sheet(context)
     matches = await _run(sheet.matches)
 
