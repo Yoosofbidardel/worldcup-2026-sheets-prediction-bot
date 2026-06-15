@@ -3,6 +3,7 @@ service_account.json
 assignments.json
 reminders_sent.json
 seen_intro.json
+announce.json
 .venv/
 __pycache__/
 *.pyc
