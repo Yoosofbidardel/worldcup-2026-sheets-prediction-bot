@@ -906,8 +906,7 @@ async def group_announce_job(context: ContextTypes.DEFAULT_TYPE):
     for m in new_started:
         preds = await _run(sheet.match_all_predictions, m["row"])
         head = (
-            "🔒 بازی شروع شد و پیش‌بینی‌ها قفل شد!\n"
-            f"⚽️ *{_team(m['home'])}* 🆚 *{_team(m['away'])}*\n\n"
+            f"⏰🔒 مهلتِ ارسالِ پیش‌بینیِ بازیِ *{_team(m['home'])}* 🆚 *{_team(m['away'])}* به پایان رسید!\n\n"
             "📋 پیش‌بینیِ همه:"
         )
         if preds:
