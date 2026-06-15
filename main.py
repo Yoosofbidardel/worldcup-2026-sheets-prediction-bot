@@ -64,7 +64,13 @@ def main():
             interval=ANNOUNCE_CHECK_MINUTES * 60,
             first=45,
         )
-        logging.info("Group announce check every %.0f min.", ANNOUNCE_CHECK_MINUTES)
+        # Precise: fire each match's prediction post exactly at its kickoff.
+        app.job_queue.run_repeating(
+            bot.reschedule_kickoffs_job,
+            interval=1800,  # re-scan every 30 min for new/updated kickoffs + restarts
+            first=12,
+        )
+        logging.info("Group announce: 15-min fallback + exact-kickoff timers.")
 
     logging.info("Bot started. Polling…")
     app.run_polling()

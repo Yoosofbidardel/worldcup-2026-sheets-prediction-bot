@@ -925,39 +925,74 @@ async def daily_analysis_job(context: ContextTypes.DEFAULT_TYPE):
         logging.warning("Daily analysis post failed: %s", e)
 
 
+async def _post_match_predictions(context, m) -> bool:
+    """Post everyone's predictions for one match to the group — with team names so
+    each score is unambiguous. Marks it announced; returns True if it posted."""
+    gid = store.get_group_id()
+    if not gid or m["row"] in store.get_started():
+        return False
+    preds = await _run(_sheet(context).match_all_predictions, m["row"])
+    head = (
+        f"⏰🔒 مهلتِ ارسالِ پیش‌بینیِ بازیِ *{_team(m['home'])}* 🆚 *{_team(m['away'])}* به پایان رسید!\n\n"
+        "📋 پیش‌بینیِ همه:"
+    )
+    if preds:
+        rows = [
+            f"• {p['name']}: {_team(m['home'])} {_score(p['home'], p['away'])} {_team(m['away'])}"
+            for p in preds
+        ]
+    else:
+        rows = ["• هیچکس برای این بازی پیش‌بینی نکرده بود! 😅"]
+    try:
+        await context.bot.send_message(
+            chat_id=gid, text=_rtl(head + "\n" + "\n".join(rows)), parse_mode=ParseMode.MARKDOWN
+        )
+        store.set_started(list(store.get_started() | {m["row"]}))
+        return True
+    except Exception as e:
+        logging.warning("Predictions post failed (row %s): %s", m["row"], e)
+        return False
+
+
+async def kickoff_fire_job(context: ContextTypes.DEFAULT_TYPE):
+    """Fires exactly at a match's kickoff -> post that match's predictions."""
+    row = context.job.data
+    m = next((x for x in await _run(_sheet(context).matches) if x["row"] == row), None)
+    if m and m["started"]:
+        await _post_match_predictions(context, m)
+
+
+async def reschedule_kickoffs_job(context: ContextTypes.DEFAULT_TYPE):
+    """Keep a precise run-once timer set for every upcoming match at its exact
+    kickoff. Re-runs periodically so new/updated kickoffs (and restarts) are covered."""
+    if not store.get_group_id() or context.job_queue is None:
+        return
+    now = datetime.now(timezone.utc)
+    started = store.get_started()
+    for m in await _run(_sheet(context).matches):
+        ko = m["kickoff"]
+        if not ko or ko <= now or m["row"] in started:
+            continue
+        name = f"ko:{m['row']}"
+        if context.job_queue.get_jobs_by_name(name):
+            continue
+        context.job_queue.run_once(kickoff_fire_job, when=ko, name=name, data=m["row"])
+
+
 async def group_announce_job(context: ContextTypes.DEFAULT_TYPE):
-    """On each check: post everyone's predictions for newly STARTED matches, and
-    post the updated leaderboard for newly FINISHED matches."""
+    """Fallback poll (every 15 min): post predictions for any started match the
+    exact-kickoff timer missed (e.g. bot was down), and the leaderboard for newly
+    finished matches."""
     gid = store.get_group_id()
     if not gid:
         return
     sheet = _sheet(context)
     matches = await _run(sheet.matches)
 
-    # 1) Newly STARTED (kickoff passed) -> reveal everyone's predictions.
-    started_seen = store.get_started()
-    new_started = sorted(
-        [m for m in matches if m["started"] and m["row"] not in started_seen],
-        key=lambda x: x["row"],
-    )
-    for m in new_started:
-        preds = await _run(sheet.match_all_predictions, m["row"])
-        head = (
-            f"⏰🔒 مهلتِ ارسالِ پیش‌بینیِ بازیِ *{_team(m['home'])}* 🆚 *{_team(m['away'])}* به پایان رسید!\n\n"
-            "📋 پیش‌بینیِ همه:"
-        )
-        if preds:
-            rows = [f"• {p['name']}: {_score(p['home'], p['away'])}" for p in preds]
-        else:
-            rows = ["• هیچکس برای این بازی پیش‌بینی نکرده بود! 😅"]
-        try:
-            await context.bot.send_message(
-                chat_id=gid, text=_rtl(head + "\n" + "\n".join(rows)), parse_mode=ParseMode.MARKDOWN
-            )
-        except Exception as e:
-            logging.warning("Kickoff predictions post failed (row %s): %s", m["row"], e)
-    if new_started:
-        store.set_started(list(started_seen | {m["row"] for m in new_started}))
+    # 1) Started matches not yet announced -> reveal everyone's predictions.
+    for m in sorted([x for x in matches if x["started"]], key=lambda x: x["row"]):
+        if m["row"] not in store.get_started():
+            await _post_match_predictions(context, m)
 
     # 2) Newly FINISHED (result entered) -> post the updated leaderboard.
     finished = {m["row"]: m for m in matches if m["actual_home"] is not None}
