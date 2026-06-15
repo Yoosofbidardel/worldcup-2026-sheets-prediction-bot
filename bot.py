@@ -93,6 +93,13 @@ def _score(home, away) -> str:
     return _fa_num(f"{home} - {away}")
 
 
+def _pred_line(name, home_fa, away_fa, h, a) -> str:
+    """One tidy prediction row: the name and the whole 'team score team' result
+    are each isolated, so a Latin name never shuffles the line's layout."""
+    unit = _iso(f"{home_fa} {_fa_num(f'{h} - {a}')} {away_fa}")
+    return f"• {_iso(name)}: {unit}"
+
+
 def _rtl(text: str) -> str:
     """Force every line to RTL base direction."""
     return "\n".join(RLM + ln for ln in text.split("\n"))
@@ -912,10 +919,8 @@ async def _match_predictions_text(context, m) -> str:
         "📋 پیش‌بینیِ همه:"
     )
     if preds:
-        rows = [
-            f"• {p['name']}: {_team(m['home'])} {_score(p['home'], p['away'])} {_team(m['away'])}"
-            for p in preds
-        ]
+        home_fa, away_fa = _team_fa(m["home"]), _team_fa(m["away"])
+        rows = [_pred_line(p["name"], home_fa, away_fa, p["home"], p["away"]) for p in preds]
     else:
         rows = ["• هیچکس برای این بازی پیش‌بینی نکرده بود! 😅"]
     return head + "\n" + "\n".join(rows)
