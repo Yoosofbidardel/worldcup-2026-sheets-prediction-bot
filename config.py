@@ -47,8 +47,9 @@ FIRST_SLOT_COL = 5
 SLOT_STRIDE = 3
 
 # Real match fixtures live in this row range; A=home B=away C=actual_home D=actual_away.
+# MATCH_LAST_ROW is env-configurable: a 72-match group stage needs rows 3..74.
 MATCH_FIRST_ROW = 3
-MATCH_LAST_ROW = 69
+MATCH_LAST_ROW = int(os.getenv("MATCH_LAST_ROW", "69"))
 
 # Column that stores each match's kickoff time (ISO-8601 UTC). It MUST sit past
 # every prediction block (and the ROBOT block), otherwise it collides with a
@@ -62,10 +63,12 @@ EXCLUDED_NAMES = {"ROBOT", "Kickoff (UTC)"}
 
 # Special predictions: row -> (label, points). The prediction text goes in the
 # participant's FIRST block column; the actual answer is entered by the admin in C.
+# SPECIAL_BASE_ROW is env-configurable (these rows shift down if group rows grow).
+SPECIAL_BASE_ROW = int(os.getenv("SPECIAL_BASE_ROW", "70"))
 SPECIAL_ROWS = {
-    70: ("قهرمان جام جهانی", 7),
-    71: ("بهترین بازیکن تورنمنت", 6),
-    72: ("آقای گل", 6),
+    SPECIAL_BASE_ROW: ("قهرمان جام جهانی", 7),
+    SPECIAL_BASE_ROW + 1: ("بهترین بازیکن تورنمنت", 6),
+    SPECIAL_BASE_ROW + 2: ("آقای گل", 6),
 }
 
 # Local file mapping telegram users -> sheet slots.
