@@ -84,6 +84,10 @@ REMINDERS_FILE = os.path.join(os.path.dirname(__file__), "reminders_sent.json")
 # Tracks which users have already seen the first-time guide (so it shows once).
 SEEN_FILE = os.path.join(os.path.dirname(__file__), "seen_intro.json")
 
+# Append-only audit log of every prediction a user saves (kept forever, even
+# when they change a pick), so the admin can review who predicted what.
+PREDLOG_FILE = os.path.join(os.path.dirname(__file__), "predictions_log.jsonl")
+
 # ── Group announcements (daily analysis call + post-match leaderboard) ────
 # Stores the main-group chat id, the daily totals snapshot, and which finished
 # matches were already announced.
