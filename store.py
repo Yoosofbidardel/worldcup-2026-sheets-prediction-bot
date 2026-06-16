@@ -8,12 +8,15 @@ import json
 import os
 import threading
 
-from config import ANNOUNCE_FILE, ASSIGNMENTS_FILE, REMINDERS_FILE, SEEN_FILE
+from datetime import datetime, timezone
+
+from config import ANNOUNCE_FILE, ASSIGNMENTS_FILE, PREDLOG_FILE, REMINDERS_FILE, SEEN_FILE
 
 _lock = threading.Lock()
 _rem_lock = threading.Lock()
 _seen_lock = threading.Lock()
 _ann_lock = threading.Lock()
+_log_lock = threading.Lock()
 
 
 def _load() -> dict:
@@ -195,6 +198,32 @@ def set_auto_leaderboard(on: bool):
         data = _load_announce()
         data["auto_leaderboard"] = bool(on)
         _save_announce(data)
+
+
+# ── Prediction audit log (append-only; never overwritten) ────────────────
+def log_prediction(record: dict):
+    """Append one prediction event with a UTC timestamp. Every save is kept,
+    so a match predicted 3 times leaves 3 records."""
+    record = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), **record}
+    with _log_lock:
+        with open(PREDLOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def read_prediction_log(limit: int | None = None) -> list:
+    """All logged predictions oldest→newest (or the last `limit`)."""
+    if not os.path.exists(PREDLOG_FILE):
+        return []
+    recs = []
+    with open(PREDLOG_FILE, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    recs.append(json.loads(line))
+                except ValueError:
+                    pass
+    return recs[-limit:] if limit else recs
 
 
 def init_announce(group_id: int, snapshot: dict, announced, started):

@@ -37,7 +37,7 @@ from telegram.ext import (
 
 import api_client
 import store
-from config import ADMIN_IDS, DISPLAY_TZ, REMINDER_WINDOWS_HOURS
+from config import ADMIN_IDS, DISPLAY_TZ, PREDLOG_FILE, REMINDER_WINDOWS_HOURS
 from teams_fa import fa as _team_fa
 
 MAX_SCORE = 20  # cap for the +/- stepper
@@ -55,6 +55,7 @@ BTN_HELP = "❓ راهنما"
 BTN_SEND_TABLE = "📤 ارسال جدول"
 BTN_SEND_PREDS = "📤 ارسال پیش‌بینی‌ها"
 BTN_TOGGLE_AUTO = "⚙️ ارسال خودکار نتایج"
+BTN_PREDLOG = "📜 لاگ پیش‌بینی‌ها"
 
 # ── Bidi helpers (keep the layout stable when Latin text appears) ─────────
 RLM = "‏"  # right-to-left mark — forces RTL base direction on a line
@@ -160,7 +161,7 @@ def _main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
     if is_admin:  # leaderboard (others' scores) + broadcast are admin-only
         rows.append([KeyboardButton(BTN_LEADERBOARD), KeyboardButton(BTN_BROADCAST)])
         rows.append([KeyboardButton(BTN_SEND_TABLE), KeyboardButton(BTN_SEND_PREDS)])
-        rows.append([KeyboardButton(BTN_TOGGLE_AUTO)])
+        rows.append([KeyboardButton(BTN_TOGGLE_AUTO), KeyboardButton(BTN_PREDLOG)])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
@@ -199,6 +200,7 @@ ADMIN_GUIDE = (
     "• «📤 ارسال جدول» — جدولو همین‌جا (گروه یا پیوی) بفرست.\n"
     "• «📤 ارسال پیش‌بینی‌ها» — پیش‌بینیِ یه بازی رو همین‌جا بفرست.\n"
     "• «⚙️ ارسال خودکار نتایج» — ارسالِ خودکارِ جدولِ بعد از بازی رو روشن/خاموش کن.\n"
+    "• «📜 لاگ پیش‌بینی‌ها» — کلِ تاریخچه‌ی پیش‌بینی‌های همه رو بگیر.\n"
     "• `/slots` و `/assign <idx> <id>` — وصل کردن آدما به اسما.\n"
     "• `/assignments` و `/unassign <id>` — مدیریت اتصالا.\n"
     "• `/synckickoffs` — گرفتن زمان شروع بازیا از API.\n"
@@ -475,6 +477,10 @@ async def stepper_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _edit(query, "⏰ ای داد! همین الان بسته شد، پیش‌بینیت ثبت نشد 😬")
         return
     await _run(sheet.set_match_prediction, a["col"], row, home, away)
+    store.log_prediction({
+        "type": "match", "uid": update.effective_user.id, "name": a["name"],
+        "row": row, "home": home_name, "away": away_name, "ph": home, "pa": away,
+    })
     await query.answer("ثبت شد ✅🔥")
     await _edit(
         query,
@@ -510,6 +516,7 @@ async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     sheet = _sheet(context)
     preds = await _run(sheet.user_predictions, a["col"])
+    pts = await _run(sheet.user_points, a["col"])  # points earned per row
     matches = {m["row"]: m for m in await _run(sheet.matches)}
     specials = {s["row"]: s for s in await _run(sheet.specials)}
 
@@ -525,14 +532,16 @@ async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 actual = _score(m["actual_home"], m["actual_away"])
                 res = f"  (نتیجه‌ش شد: {actual})"
             score = _score(h, aw)
-            lines.append(f"⚽️ {_team(m['home'])} {score} {_team(m['away'])}{res}")
+            pt = f"  🏅 {_fmt_total(pts[row])} امتیاز" if m["actual_home"] is not None and row in pts else ""
+            lines.append(f"⚽️ {_team(m['home'])} {score} {_team(m['away'])}{res}{pt}")
     else:
         lines.append("• هنوز هیچی پیش‌بینی نکردی که! 😴 دِ پاشو یه چیزی بزن دیگه تنبل‌خان 😏")
     if preds["specials"]:
         lines.append("")
         for row in sorted(preds["specials"]):
             s = specials.get(row)
-            lines.append(f"🏆 {s['label'] if s else row}: {_iso(preds['specials'][row])}")
+            pt = f"  🏅 {_fmt_total(pts[row])} امتیاز" if s and not s["open"] and row in pts else ""
+            lines.append(f"🏆 {s['label'] if s else row}: {_iso(preds['specials'][row])}{pt}")
     await _say(update, "\n".join(lines))
 
 
@@ -592,6 +601,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await cmd_send_preds(update, context)
     if text == BTN_TOGGLE_AUTO:
         return await cmd_toggle_auto(update, context)
+    if text == BTN_PREDLOG:
+        return await cmd_predlog(update, context)
 
     pending = context.user_data.get("await")
     # Admin is composing a broadcast: this text is the message to send to everyone.
@@ -611,6 +622,10 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     label = context.user_data.get("label", "")
     await _run(_sheet(context).set_special_prediction, a["col"], row, text)
+    store.log_prediction({
+        "type": "special", "uid": update.effective_user.id, "name": a["name"],
+        "row": row, "label": label, "text": text,
+    })
     context.user_data.clear()
     await _say(
         update,
@@ -1133,6 +1148,39 @@ async def cmd_toggle_auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def cmd_predlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: get the full prediction history as a file + a preview of the last 20."""
+    if not _is_admin(update.effective_user.id):
+        return
+    recs = store.read_prediction_log()
+    if not recs:
+        await _say(update, "هنوز هیچ پیش‌بینی‌ای ثبت نشده.")
+        return
+    try:
+        with open(PREDLOG_FILE, "rb") as f:
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=f,
+                filename="predictions_log.jsonl",
+                caption=f"📜 کلِ تاریخچه‌ی پیش‌بینی‌ها — {_fa_num(len(recs))} رکورد",
+            )
+    except Exception as e:
+        logging.warning("predlog document send failed: %s", e)
+    lines = ["📜 *۲۰ پیش‌بینیِ آخر* (کاملش تو فایلِ بالاست):\n"]
+    for r in recs[-20:]:
+        try:
+            when = _fmt_kickoff(datetime.fromisoformat(r["ts"]))
+        except Exception:
+            when = ""
+        if r.get("type") == "special":
+            body = f"• {_iso(r.get('name', '?'))}: {r.get('label', '')} → {_iso(str(r.get('text', '')))}"
+        else:
+            home_fa, away_fa = _team_fa(r.get("home", "")), _team_fa(r.get("away", ""))
+            body = _pred_line(r.get("name", "?"), home_fa, away_fa, r.get("ph", 0), r.get("pa", 0))
+        lines.append(f"{body}  🕐 {when}")
+    await _say(update, "\n".join(lines))
+
+
 def register(app: Application):
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
@@ -1152,6 +1200,7 @@ def register(app: Application):
     app.add_handler(CommandHandler("sendtable", cmd_send_table))
     app.add_handler(CommandHandler("sendpreds", cmd_send_preds))
     app.add_handler(CommandHandler("autoresults", cmd_toggle_auto))
+    app.add_handler(CommandHandler("predlog", cmd_predlog))
     app.add_handler(CommandHandler("synckickoffs", cmd_synckickoffs))
     app.add_handler(CommandHandler("syncresults", cmd_syncresults))
     # interactive

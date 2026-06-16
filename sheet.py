@@ -235,6 +235,27 @@ class SheetClient:
                 out.append({"name": s["name"], "home": as_int(h), "away": as_int(a)})
         return out
 
+    def user_points(self, base_col: int) -> dict:
+        """{row: points} the sheet's formula gave this participant per row
+        (their points column is base_col+2). Blank/zero cells are skipped."""
+        pts_letter = rowcol_to_a1(1, base_col + 2)[:-1]
+        last = max(MATCH_LAST_ROW, max(SPECIAL_ROWS))
+        with self._lock:
+            vals = self._ws.get(
+                f"{pts_letter}{MATCH_FIRST_ROW}:{pts_letter}{last}",
+                value_render_option="UNFORMATTED_VALUE",
+            )
+        out = {}
+        for i, cell in enumerate(vals):
+            v = cell[0] if cell else None
+            if _blank(v):
+                continue
+            try:
+                out[MATCH_FIRST_ROW + i] = float(v)
+            except (TypeError, ValueError):
+                pass
+        return out
+
     def match_prediction(self, base_col: int, row: int) -> tuple:
         """Current (home, away) prediction for one player+match, ints or (None, None)."""
         home_letter = rowcol_to_a1(1, base_col)[:-1]

@@ -4,6 +4,7 @@ assignments.json
 reminders_sent.json
 seen_intro.json
 announce.json
+predictions_log.jsonl
 .venv/
 __pycache__/
 *.pyc
