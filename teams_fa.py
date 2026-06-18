@@ -31,7 +31,7 @@ _FA = {
     "haiti": "هائیتی",
     "curacao": "کوراسائو",
     "suriname": "سورینام",
-    "trinidadandtobago": "ترینیداد و توباگو",
+    "trinidadandtobago": "ترینیداد",
     # Europe
     "france": "فرانسه",
     "england": "انگلیس",
@@ -61,12 +61,12 @@ _FA = {
     "russia": "روسیه",
     "slovenia": "اسلوونی",
     "slovakia": "اسلواکی",
-    "bosniaandherzegovina": "بوسنی و هرزگوین",
+    "bosniaandherzegovina": "بوسنی",
     "iceland": "ایسلند",
     "finland": "فنلاند",
     "albania": "آلبانی",
     "bulgaria": "بلغارستان",
-    "northmacedonia": "مقدونیه شمالی",
+    "northmacedonia": "مقدونیه",
     "montenegro": "مونته‌نگرو",
     "georgia": "گرجستان",
     "azerbaijan": "آذربایجان",
@@ -122,7 +122,7 @@ _FA = {
     "malaysia": "مالزی",
     "philippines": "فیلیپین",
     "newzealand": "نیوزیلند",
-    "newcaledonia": "کالدونیای جدید",
+    "newcaledonia": "کالدونیا",
 }
 
 
