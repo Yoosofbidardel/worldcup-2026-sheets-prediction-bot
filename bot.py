@@ -144,6 +144,12 @@ def _mention(name: str, uid) -> str:
     return f"[{name}](tg://user?id={uid})" if uid else name
 
 
+def _thread_kw() -> dict:
+    """Post into the saved forum topic (if /setgroup was run inside one)."""
+    tid = store.get_thread_id()
+    return {"message_thread_id": tid} if tid else {}
+
+
 def _sheet(context):
     return context.application.bot_data["sheet"]
 
@@ -916,12 +922,15 @@ async def cmd_setgroup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     matches = await _run(sheet.matches)
     finished = [m["row"] for m in matches if m["actual_home"] is not None]
     started = [m["row"] for m in matches if m["started"]]
+    tid = update.effective_message.message_thread_id  # forum topic, or None (General)
     # baseline now so we don't dump a backlog of already started/finished matches.
-    store.init_announce(chat.id, {str(e["col"]): e["total"] for e in standings}, finished, started)
+    store.init_announce(chat.id, {str(e["col"]): e["total"] for e in standings}, finished, started, thread_id=tid)
+    where = "همین تاپیک" if tid else "تاپیکِ General"
     await update.message.reply_text(
-        "✅ این گروه ثبت شد!\n"
-        "• بعد از شروعِ هر بازی، پیش‌بینیِ همه برای اون بازی این‌جا اعلام می‌شه. 🔒\n"
-        "• بعد از پایانِ هر بازی هم جدول این‌جا منتشر می‌شه. 🏁"
+        f"✅ این گروه ثبت شد! از این به بعد اعلام‌ها تو *{where}* میاد.\n"
+        "• بعد از شروعِ هر بازی، پیش‌بینیِ همه اعلام می‌شه. 🔒\n"
+        "• بعد از پایانِ هر بازی هم جدول منتشر می‌شه. 🏁",
+        parse_mode=ParseMode.MARKDOWN,
     )
 
 
@@ -948,7 +957,8 @@ async def _post_match_predictions(context, m) -> bool:
         return False
     try:
         await context.bot.send_message(
-            chat_id=gid, text=_rtl(await _match_predictions_text(context, m)), parse_mode=ParseMode.MARKDOWN
+            chat_id=gid, text=_rtl(await _match_predictions_text(context, m)),
+            parse_mode=ParseMode.MARKDOWN, **_thread_kw(),
         )
         store.set_started(list(store.get_started() | {m["row"]}))
         return True
@@ -1020,7 +1030,8 @@ async def group_announce_job(context: ContextTypes.DEFAULT_TYPE):
             body = _leaderboard_lines(standings, "📊 *جدول به‌روز شد:*\n")
             try:
                 await context.bot.send_message(
-                    chat_id=gid, text=_rtl(f"🏁 بازی تموم شد!\n{fin}\n\n{body}"), parse_mode=ParseMode.MARKDOWN
+                    chat_id=gid, text=_rtl(f"🏁 بازی تموم شد!\n{fin}\n\n{body}"),
+                    parse_mode=ParseMode.MARKDOWN, **_thread_kw(),
                 )
             except Exception as e:
                 logging.warning("Match-end leaderboard post failed: %s", e)
@@ -1049,7 +1060,7 @@ async def daily_fixtures_job(context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"⚽️ {_team(m['home'])} 🆚 {_team(m['away'])}  ⏰ {_fmt_kickoff(m['kickoff'])}")
     lines.append("\n⏳ یادتون نره پیش‌بینی‌هاتونو ثبت کنید! 🎯")
     try:
-        await context.bot.send_message(chat_id=gid, text=_rtl("\n".join(lines)), parse_mode=ParseMode.MARKDOWN)
+        await context.bot.send_message(chat_id=gid, text=_rtl("\n".join(lines)), parse_mode=ParseMode.MARKDOWN, **_thread_kw())
     except Exception as e:
         logging.warning("Daily fixtures post failed: %s", e)
 

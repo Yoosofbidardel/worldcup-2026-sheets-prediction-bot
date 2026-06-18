@@ -134,7 +134,7 @@ def mark_seen_intro(user_id: int):
 
 # ── Group announcements state ────────────────────────────────────────────
 def _load_announce() -> dict:
-    base = {"group_id": None, "snapshot": {}, "announced": [], "started": [], "auto_leaderboard": True}
+    base = {"group_id": None, "thread_id": None, "snapshot": {}, "announced": [], "started": [], "auto_leaderboard": True}
     if not os.path.exists(ANNOUNCE_FILE):
         return base
     try:
@@ -154,6 +154,11 @@ def _save_announce(data: dict):
 
 def get_group_id():
     return _load_announce().get("group_id")
+
+
+def get_thread_id():
+    """Forum-topic id to post announcements into, or None for the General topic."""
+    return _load_announce().get("thread_id")
 
 
 def get_snapshot() -> dict:
@@ -226,15 +231,19 @@ def read_prediction_log(limit: int | None = None) -> list:
     return recs[-limit:] if limit else recs
 
 
-def init_announce(group_id: int, snapshot: dict, announced, started):
-    """Register the group and baseline already-finished + already-started matches
-    (so we don't dump a backlog of past matches when the group is first set)."""
+def init_announce(group_id: int, snapshot: dict, announced, started, thread_id=None):
+    """Register the group (and optional forum-topic) and baseline already-finished
+    + already-started matches (so we don't dump a backlog when first set). Preserves
+    the auto_leaderboard toggle."""
     with _ann_lock:
-        _save_announce(
+        data = _load_announce()
+        data.update(
             {
                 "group_id": group_id,
+                "thread_id": thread_id,
                 "snapshot": snapshot,
                 "announced": sorted(set(int(r) for r in announced)),
                 "started": sorted(set(int(r) for r in started)),
             }
         )
+        _save_announce(data)
