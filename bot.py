@@ -56,6 +56,7 @@ BTN_SEND_TABLE = "📤 ارسال جدول"
 BTN_SEND_PREDS = "📤 ارسال پیش‌بینی‌ها"
 BTN_TOGGLE_AUTO = "⚙️ ارسال خودکار نتایج"
 BTN_PREDLOG = "📜 لاگ پیش‌بینی‌ها"
+BTN_SEND_GROUP = "📨 پیام تو گروه"  # admin only — post in the group as the bot
 
 # ── Bidi helpers (keep the layout stable when Latin text appears) ─────────
 RLM = "‏"  # right-to-left mark — forces RTL base direction on a line
@@ -168,6 +169,7 @@ def _main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
         rows.append([KeyboardButton(BTN_LEADERBOARD), KeyboardButton(BTN_BROADCAST)])
         rows.append([KeyboardButton(BTN_SEND_TABLE), KeyboardButton(BTN_SEND_PREDS)])
         rows.append([KeyboardButton(BTN_TOGGLE_AUTO), KeyboardButton(BTN_PREDLOG)])
+        rows.append([KeyboardButton(BTN_SEND_GROUP)])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
@@ -201,7 +203,8 @@ GUIDE = (
 ADMIN_GUIDE = (
     "\n\n— — — — —\n"
     "👑 *مخصوص ادمین*\n"
-    "• «📢 پیام به همه» — یه پیام بده به همه‌ی بچه‌ها.\n"
+    "• «📢 پیام به همه» — یه پیام بده به همه‌ی بچه‌ها (تو پیویِ هرکی).\n"
+    "• «📨 پیام تو گروه» — یه پیام از طرفِ ربات بذار تو گروه.\n"
     "• «📊 جدول امتیازات» — جدولو ببین (فقط خودت می‌بینی).\n"
     "• «📤 ارسال جدول» — جدولو همین‌جا (گروه یا پیوی) بفرست.\n"
     "• «📤 ارسال پیش‌بینی‌ها» — پیش‌بینیِ یه بازی رو همین‌جا بفرست.\n"
@@ -609,6 +612,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await cmd_toggle_auto(update, context)
     if text == BTN_PREDLOG:
         return await cmd_predlog(update, context)
+    if text == BTN_SEND_GROUP:
+        return await cmd_sendgroup(update, context)
 
     pending = context.user_data.get("await")
     # Admin is composing a broadcast: this text is the message to send to everyone.
@@ -617,6 +622,13 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not _is_admin(update.effective_user.id):
             return
         await _broadcast(update, context, text)
+        return
+    # Admin is composing a group message: post it in the group as the bot.
+    if pending and pending[0] == "groupmsg":
+        context.user_data.clear()
+        if not _is_admin(update.effective_user.id):
+            return
+        await _post_to_group(update, context, text)
         return
     if not pending or pending[0] != "special":
         return  # nothing awaited; ignore stray text
@@ -739,8 +751,9 @@ async def _broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE, text: s
     if not data:
         await _say(update, "🤷 هنوز هیچ شرکت‌کننده‌ای وصل نشده که بهش پیام بدم.")
         return
-    # Sent without Markdown parsing so the admin's text can't break formatting.
-    out = _rtl(f"📢 پیام ادمین:\n\n{text}")
+    # Sent without Markdown parsing so the admin's text can't break formatting,
+    # and with no prefix/header — exactly the admin's words, nothing added.
+    out = _rtl(text)
     sent = failed = 0
     for uid in data:
         try:
@@ -753,6 +766,36 @@ async def _broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE, text: s
     if failed:
         msg += f"\n⚠️ *{_fa_num(failed)}* نفر ناموفق (شاید ربات رو استارت نکردن یا بلاک کردن)."
     await _say(update, msg)
+
+
+# ── Send to group: admin posts a message in the group, as the bot ────────
+async def cmd_sendgroup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update.effective_user.id):
+        return
+    if not store.get_group_id():
+        await _say(update, "⚠️ هنوز هیچ گروهی ثبت نشده‌ها. اول تو خودِ گروه `/setgroup` رو بزن.")
+        return
+    # /sendgroup <text> posts immediately; bare button/command asks for the text.
+    text = " ".join(context.args).strip() if context.args else ""
+    if not text:
+        context.user_data["await"] = ("groupmsg", None)
+        await _say(update, "✍️ متنی که می‌خوای ربات از طرفِ خودش تو *گروه* بذاره رو بفرست:")
+        return
+    await _post_to_group(update, context, text)
+
+
+async def _post_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    gid = store.get_group_id()
+    if not gid:
+        await _say(update, "⚠️ هنوز هیچ گروهی ثبت نشده. اول تو گروه `/setgroup` رو بزن.")
+        return
+    try:
+        # No prefix, no Markdown parsing — exactly what the admin wrote, as the bot.
+        await context.bot.send_message(chat_id=gid, text=_rtl(text), **_thread_kw())
+        await _say(update, "✅ گذاشتمش تو گروه. 📨")
+    except Exception as e:
+        logging.warning("Group post failed: %s", e)
+        await _say(update, "❌ نشد بذارم تو گروه. مطمئن شو ربات تو گروه هست و دسترسیِ ارسال داره.")
 
 
 # ── Kickoff-time sync (API → sheet) ──────────────────────────────────────
@@ -1207,6 +1250,7 @@ def register(app: Application):
     app.add_handler(CommandHandler("unassign", cmd_unassign))
     app.add_handler(CommandHandler("assignments", cmd_assignments))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
+    app.add_handler(CommandHandler("sendgroup", cmd_sendgroup))
     app.add_handler(CommandHandler("setgroup", cmd_setgroup))
     app.add_handler(CommandHandler("sendtable", cmd_send_table))
     app.add_handler(CommandHandler("sendpreds", cmd_send_preds))
