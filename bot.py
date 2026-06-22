@@ -57,6 +57,7 @@ BTN_SEND_PREDS = "📤 ارسال پیش‌بینی‌ها"
 BTN_TOGGLE_AUTO = "⚙️ ارسال خودکار نتایج"
 BTN_PREDLOG = "📜 لاگ پیش‌بینی‌ها"
 BTN_SEND_GROUP = "📨 پیام تو گروه"  # admin only — post in the group as the bot
+BTN_TOPGAINERS = "🏅 برترین‌های دیروز"  # admin only — post yesterday's top gainers
 
 # ── Bidi helpers (keep the layout stable when Latin text appears) ─────────
 RLM = "‏"  # right-to-left mark — forces RTL base direction on a line
@@ -169,7 +170,7 @@ def _main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
         rows.append([KeyboardButton(BTN_LEADERBOARD), KeyboardButton(BTN_BROADCAST)])
         rows.append([KeyboardButton(BTN_SEND_TABLE), KeyboardButton(BTN_SEND_PREDS)])
         rows.append([KeyboardButton(BTN_TOGGLE_AUTO), KeyboardButton(BTN_PREDLOG)])
-        rows.append([KeyboardButton(BTN_SEND_GROUP)])
+        rows.append([KeyboardButton(BTN_SEND_GROUP), KeyboardButton(BTN_TOPGAINERS)])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
@@ -615,6 +616,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await cmd_predlog(update, context)
     if text == BTN_SEND_GROUP:
         return await cmd_sendgroup(update, context)
+    if text == BTN_TOPGAINERS:
+        return await cmd_topgainers(update, context)
 
     pending = context.user_data.get("await")
     # Admin is composing a broadcast: this text is the message to send to everyone.
@@ -1015,7 +1018,7 @@ async def _post_top_gainers(context: ContextTypes.DEFAULT_TYPE, rebaseline: bool
     ]
     for i, (e, d) in enumerate(deltas[:TOP_GAINERS_COUNT]):
         medal = _GAINER_MEDALS[i] if i < len(_GAINER_MEDALS) else "🏅"
-        lines.append(f"{medal} {_mention(e['name'], col_uid.get(e['col']))} (+{_iso(_fmt_total(d))})")
+        lines.append(f"{medal} {_mention(e['name'], col_uid.get(e['col']))} — دیروز *{_iso(_fmt_total(d))}* امتیاز گرفتِس 📈")
     lines.append(
         "\nدمتون گرم، تبریک می‌گم بهتون! 🎉 د حالا که اینقده خوش‌فکرید، "
         "بی‌زحمت بازی‌های امروزو یه تحلیل کنید واسه‌مون ببینیم نظرتون چیه 👀⚽️"
