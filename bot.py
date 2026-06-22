@@ -40,6 +40,7 @@ import store
 from config import (
     ADMIN_IDS,
     BESTPLAYER_ROW,
+    CHAMPION_FINAL_DEADLINE_DT,
     CHAMPION_ROW,
     DISPLAY_TZ,
     PREDLOG_FILE,
@@ -140,12 +141,24 @@ def _deadline_str() -> str:
     return _fmt_kickoff(SPECIAL_DEADLINE_DT) if SPECIAL_DEADLINE_DT else ""
 
 
+def _champion_locked() -> bool:
+    """True once the champion's FINAL deadline (start of knockouts) has passed."""
+    return CHAMPION_FINAL_DEADLINE_DT is not None and datetime.now(timezone.utc) >= CHAMPION_FINAL_DEADLINE_DT
+
+
+def _final_deadline_str() -> str:
+    return _fmt_kickoff(CHAMPION_FINAL_DEADLINE_DT) if CHAMPION_FINAL_DEADLINE_DT else ""
+
+
 def _special_is_open(s: dict) -> bool:
     """Whether a special prediction can currently be set/changed. Top-scorer &
-    best-player hard-close at the deadline; the champion stays editable (changing
-    it after the deadline just forfeits the +5 bonus)."""
+    best-player hard-close at the deadline; the champion stays editable until the
+    knockout stage starts (changing it after the first deadline just forfeits the
+    +5 bonus)."""
     if s["row"] in (BESTPLAYER_ROW, TOPSCORER_ROW):
         return s["open"] and not _deadline_passed()
+    if s["row"] == CHAMPION_ROW:
+        return s["open"] and not _champion_locked()
     return s["open"]
 
 
@@ -546,7 +559,8 @@ async def special_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _edit(query, "🔒 این یکی پیدا نشد جونم.")
         return
     if not _special_is_open(special):
-        await _edit(query, f"⏰ مهلتِ این پیش‌بینی تموم شدِس ({_deadline_str()}). دیگه نمی‌شه ثبتش کرد جونم. 🔒")
+        when = _final_deadline_str() if row == CHAMPION_ROW else _deadline_str()
+        await _edit(query, f"⏰ مهلتِ این پیش‌بینی تموم شدِس ({when}). دیگه نمی‌شه ثبتش کرد جونم. 🔒")
         return
     context.user_data["await"] = ("special", row)
     context.user_data["label"] = special["label"]
@@ -713,7 +727,12 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         await _say(update, f"⏰ مهلتِ این پیش‌بینی تموم شدِس ({_deadline_str()}). دیگه نمی‌شه ثبتش کرد جونم. 🔒")
         return
-    # champion after the deadline -> SECOND cell (post-deadline change), no bonus
+    # champion fully locks once the knockout stage starts
+    if row == CHAMPION_ROW and _champion_locked():
+        context.user_data.clear()
+        await _say(update, f"⏰ مهلتِ تغییرِ قهرمان تموم شدِس ({_final_deadline_str()}). دیگه قفله جونم. 🔒")
+        return
+    # champion after the first deadline -> SECOND cell (post-deadline change), no bonus
     after = row == CHAMPION_ROW and _deadline_passed()
     await _run(_sheet(context).set_special_prediction, a["col"], row, text, after)
     store.log_prediction({

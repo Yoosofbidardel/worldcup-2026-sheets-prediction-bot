@@ -92,6 +92,17 @@ try:
 except ValueError:
     SPECIAL_DEADLINE_DT = None
 
+# Champion FINAL lock = start of the knockout stage. The champion can still be
+# changed (for 7 pts, no bonus) between SPECIAL_DEADLINE and this; after this it
+# hard-closes like the other specials. Default = 2026-06-28 19:00 UTC (22:30 Tehran).
+CHAMPION_FINAL_DEADLINE = os.getenv("CHAMPION_FINAL_DEADLINE", "2026-06-28T19:00:00+00:00")
+try:
+    CHAMPION_FINAL_DEADLINE_DT = datetime.fromisoformat(CHAMPION_FINAL_DEADLINE)
+    if CHAMPION_FINAL_DEADLINE_DT.tzinfo is None:
+        CHAMPION_FINAL_DEADLINE_DT = CHAMPION_FINAL_DEADLINE_DT.replace(tzinfo=timezone.utc)
+except ValueError:
+    CHAMPION_FINAL_DEADLINE_DT = None
+
 # Local file mapping telegram users -> sheet slots.
 ASSIGNMENTS_FILE = os.path.join(os.path.dirname(__file__), "assignments.json")
 
