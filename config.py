@@ -1,4 +1,6 @@
 import os
+from datetime import datetime, timezone
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -70,6 +72,25 @@ SPECIAL_ROWS = {
     SPECIAL_BASE_ROW + 1: ("بهترین بازیکن تورنمنت", 6),
     SPECIAL_BASE_ROW + 2: ("آقای گل", 6),
 }
+# Named rows for the deadline logic below.
+CHAMPION_ROW = SPECIAL_BASE_ROW          # has the +5 early-lock bonus + a 2nd cell
+BESTPLAYER_ROW = SPECIAL_BASE_ROW + 1    # hard-closes at the deadline
+TOPSCORER_ROW = SPECIAL_BASE_ROW + 2     # hard-closes at the deadline
+CHAMPION_BONUS = 5                       # extra points for a locked-in correct champion
+
+# ── Special-prediction deadline = start of group-stage round 3 ────────────
+# Top-scorer & best-player LOCK here (can't predict/change after). Champion can
+# still be changed after, but changing it forfeits the +5 early-lock bonus; its
+# pre-deadline pick lives in the 1st cell, post-deadline changes in the 2nd cell.
+# Env-configurable (same fixtures on both sheets). ISO-8601; default = the first
+# round-3 kickoff (Switzerland–Canada), 2026-06-24 19:00 UTC (22:30 Tehran).
+SPECIAL_DEADLINE = os.getenv("SPECIAL_DEADLINE", "2026-06-24T19:00:00+00:00")
+try:
+    SPECIAL_DEADLINE_DT = datetime.fromisoformat(SPECIAL_DEADLINE)
+    if SPECIAL_DEADLINE_DT.tzinfo is None:
+        SPECIAL_DEADLINE_DT = SPECIAL_DEADLINE_DT.replace(tzinfo=timezone.utc)
+except ValueError:
+    SPECIAL_DEADLINE_DT = None
 
 # Local file mapping telegram users -> sheet slots.
 ASSIGNMENTS_FILE = os.path.join(os.path.dirname(__file__), "assignments.json")

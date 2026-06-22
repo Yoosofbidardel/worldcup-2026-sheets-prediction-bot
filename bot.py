@@ -37,7 +37,17 @@ from telegram.ext import (
 
 import api_client
 import store
-from config import ADMIN_IDS, DISPLAY_TZ, PREDLOG_FILE, REMINDER_WINDOWS_HOURS, TOP_GAINERS_COUNT
+from config import (
+    ADMIN_IDS,
+    BESTPLAYER_ROW,
+    CHAMPION_ROW,
+    DISPLAY_TZ,
+    PREDLOG_FILE,
+    REMINDER_WINDOWS_HOURS,
+    SPECIAL_DEADLINE_DT,
+    TOP_GAINERS_COUNT,
+    TOPSCORER_ROW,
+)
 from teams_fa import fa as _team_fa
 
 MAX_SCORE = 20  # cap for the +/- stepper
@@ -118,6 +128,26 @@ def _fmt_kickoff(dt) -> str:
     greg = local.strftime("%d %b %Y")
     clock = _fa_num(local.strftime("%H:%M"))
     return _iso(f"{shamsi} ({greg}) ⏰ {clock}")
+
+
+# ── Special-prediction deadline helpers ───────────────────────────────────
+def _deadline_passed() -> bool:
+    """True once the special-prediction deadline (start of group round 3) has passed."""
+    return SPECIAL_DEADLINE_DT is not None and datetime.now(timezone.utc) >= SPECIAL_DEADLINE_DT
+
+
+def _deadline_str() -> str:
+    """The deadline formatted for display (Shamsi+Gregorian / Tehran)."""
+    return _fmt_kickoff(SPECIAL_DEADLINE_DT) if SPECIAL_DEADLINE_DT else ""
+
+
+def _special_is_open(s: dict) -> bool:
+    """Whether a special prediction can currently be set/changed. Top-scorer &
+    best-player hard-close at the deadline; the champion stays editable (changing
+    it after the deadline just forfeits the +5 bonus)."""
+    if s["row"] in (BESTPLAYER_ROW, TOPSCORER_ROW):
+        return s["open"] and not _deadline_passed()
+    return s["open"]
 
 
 _MEDALS = {0: "🥇", 1: "🥈", 2: "🥉"}
@@ -406,15 +436,18 @@ async def cmd_special(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _say(update, _NOT_LINKED)
         return
     specials = await _run(_sheet(context).specials)
-    opens = [s for s in specials if s["open"]]
+    opens = [s for s in specials if _special_is_open(s)]
     if not opens:
-        await _say(update, "🤷 الان هیچ پیش‌بینی ویژه‌ای نیست.")
+        await _say(update, "🤷 الان هیچ پیش‌بینی ویژه‌ای باز نیست (مهلتشون تموم شده).")
         return
     buttons = [
         [InlineKeyboardButton(f"{s['label']} ({_fa_num(s['points'])} امتیاز)", callback_data=f"s:{s['row']}")]
         for s in opens
     ]
-    await _say(update, "🏆 یه پیش‌بینی ویژه انتخاب کن:", reply_markup=InlineKeyboardMarkup(buttons))
+    note = ""
+    if SPECIAL_DEADLINE_DT:
+        note = f"\n\n⏰ مهلتِ پیش‌بینیِ ویژه تا *شروعِ دور سومِ گروهی*: {_deadline_str()}"
+    await _say(update, "🏆 یه پیش‌بینی ویژه انتخاب کن:" + note, reply_markup=InlineKeyboardMarkup(buttons))
 
 
 async def open_stepper(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -509,15 +542,29 @@ async def special_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     row = int(query.data.split(":")[1])
     special = next((s for s in await _run(_sheet(context).specials) if s["row"] == row), None)
-    if not special or not special["open"]:
-        await _edit(query, "🔒 این پیش‌بینی بسته‌ست.")
+    if not special:
+        await _edit(query, "🔒 این پیش‌بینی پیدا نشد.")
+        return
+    if not _special_is_open(special):
+        await _edit(query, f"⏰ مهلتِ این پیش‌بینی تموم شده ({_deadline_str()}). دیگه نمی‌شه ثبتش کرد. 🔒")
         return
     context.user_data["await"] = ("special", row)
     context.user_data["label"] = special["label"]
-    await _edit(
-        query,
-        f"🏆 *{special['label']}*\n\n✍️ جوابتو به‌صورت متن بفرست (مثلاً اسم یه تیم یا بازیکن).",
-    )
+    if row == CHAMPION_ROW and _deadline_passed():
+        msg = (
+            f"🏆 *{special['label']}*\n\n"
+            "⚠️ مهلتِ قفلِ پیش‌بینی گذشته. می‌تونی عوضش کنی، ولی دیگه اون *۵ امتیازِ بونوسِ* قفل‌شدن بهت تعلق نمی‌گیره.\n"
+            "✍️ اسمِ تیمِ قهرمان رو بفرست."
+        )
+    elif row == CHAMPION_ROW:
+        msg = (
+            f"🏆 *{special['label']}*\n\n"
+            f"💡 اگه تا ددلاین ({_deadline_str()}) ثبتش کنی و دیگه عوضش نکنی، در صورتِ درست بودن *۵ امتیازِ اضافه* می‌گیری! 🤑\n"
+            "✍️ اسمِ تیمِ قهرمان رو بفرست."
+        )
+    else:
+        msg = f"🏆 *{special['label']}*\n\n✍️ جوابتو به‌صورت متن بفرست (مثلاً اسم یه تیم یا بازیکن)."
+    await _edit(query, msg)
 
 
 async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -547,12 +594,30 @@ async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"⚽️ {_team(m['home'])} {score} {_team(m['away'])}{res}{pt}")
     else:
         lines.append("• هنوز هیچ بازی‌ای پیش‌بینی نکردی! 😴 برو پیش‌بینی کن تنبل‌خان 😏")
-    if preds["specials"]:
+    # Specials, except the champion (handled separately — it has two cells).
+    other_specials = {r: v for r, v in preds["specials"].items() if r != CHAMPION_ROW}
+    if other_specials:
         lines.append("")
-        for row in sorted(preds["specials"]):
+        for row in sorted(other_specials):
             s = specials.get(row)
             pt = f"  🏅 {_fmt_total(pts[row])} امتیاز" if s and not s["open"] and row in pts else ""
-            lines.append(f"🏆 {s['label'] if s else row}: {_iso(preds['specials'][row])}{pt}")
+            lines.append(f"🏆 {s['label'] if s else row}: {_iso(other_specials[row])}{pt}")
+    # Champion: show the effective pick (post-deadline change wins) + bonus status.
+    locked, live = await _run(sheet.champion_cells, a["col"])
+    eff = live or locked
+    if eff:
+        cs = specials.get(CHAMPION_ROW)
+        clabel = cs["label"] if cs else "قهرمان جام"
+        if live:
+            status = "  (بعد از ددلاین عوض شده — بدونِ بونوس)"
+        elif _deadline_passed():
+            status = "  🔒 (قفل‌شده تا ددلاین — واجدِ ۵ امتیاز بونوس ✅)"
+        else:
+            status = "  💡 (تا ددلاین عوضش نکنی، ۵ امتیاز بونوس می‌گیری)"
+        cpt = f"  🏅 {_fmt_total(pts[CHAMPION_ROW])} امتیاز" if cs and not cs["open"] and CHAMPION_ROW in pts else ""
+        if not other_specials:
+            lines.append("")
+        lines.append(f"🏆 {clabel}: {_iso(eff)}{status}{cpt}")
     await _say(update, "\n".join(lines))
 
 
@@ -643,16 +708,38 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _say(update, "😕 دیگه به هیچ اسمی وصل نیستی. با ادمین حرف بزن.")
         return
     label = context.user_data.get("label", "")
-    await _run(_sheet(context).set_special_prediction, a["col"], row, text)
+    # Top-scorer & best-player hard-close at the deadline (guard in case the
+    # deadline passed while the user was typing).
+    if row in (BESTPLAYER_ROW, TOPSCORER_ROW) and _deadline_passed():
+        context.user_data.clear()
+        await _say(update, f"⏰ مهلتِ این پیش‌بینی تموم شد ({_deadline_str()}). دیگه نمی‌شه ثبتش کرد. 🔒")
+        return
+    # Champion after the deadline goes into the SECOND cell (a post-deadline
+    # change), which forfeits the +5 lock bonus.
+    after = row == CHAMPION_ROW and _deadline_passed()
+    await _run(_sheet(context).set_special_prediction, a["col"], row, text, after)
     store.log_prediction({
         "type": "special", "uid": update.effective_user.id, "name": a["name"],
-        "row": row, "label": label, "text": text,
+        "row": row, "label": label, "text": text, "after_deadline": after,
     })
     context.user_data.clear()
-    await _say(
-        update,
-        f"✅ ثبت شد: {label}  →  *{_iso(text)}* 🎯\nانگار به خودت خیلی مطمئنی! 😎",
-    )
+    if after:
+        await _say(
+            update,
+            f"✅ ثبت شد: {label}  →  *{_iso(text)}*\n"
+            "⚠️ چون بعد از ددلاین بود، اون ۵ امتیازِ بونوس بهت تعلق نمی‌گیره.",
+        )
+    elif row == CHAMPION_ROW:
+        await _say(
+            update,
+            f"✅ ثبت شد: {label}  →  *{_iso(text)}* 🏆\n"
+            "🔒 اگه تا ددلاین دیگه عوضش نکنی و درست باشه، ۵ امتیازِ اضافه می‌گیری! 🤑",
+        )
+    else:
+        await _say(
+            update,
+            f"✅ ثبت شد: {label}  →  *{_iso(text)}* 🎯\nانگار به خودت خیلی مطمئنی! 😎",
+        )
 
 
 # ── Admin commands ───────────────────────────────────────────────────────
@@ -904,10 +991,67 @@ def _reminder_text(window: int, name: str, home: str, away: str, kickoff) -> str
     )
 
 
+# Synthetic dedup key (a non-match "row") for the special-deadline reminder.
+_SPECIAL_REM_ROW = -1
+
+
+def _special_reminder_text(window: int, name: str, missing: list) -> str:
+    items = "\n".join(f"• {m}" for m in missing)
+    when = _deadline_str()
+    head = (
+        f"⏳ {name} جان، ۲۴ ساعت تا بسته‌شدنِ پیش‌بینی‌های ویژه مونده! 😱"
+        if window == 24 else
+        f"🚨🔥 {name}! فقط ۱ ساعت تا بسته‌شدنِ پیش‌بینی‌های ویژه مونده!"
+    )
+    return _rtl(
+        f"{head}\n\nاین‌هارو هنوز ثبت نکردی:\n{items}\n\n"
+        f"🕐 مهلت تا شروعِ دور سومِ گروهی: {when}\n"
+        "👇 دکمه‌ی «🏆 پیش‌بینی ویژه» رو بزن.\n"
+        "🤑 یادت باشه قهرمانو زود قفل کنی تا ۵ امتیازِ بونوس بگیری!"
+    )
+
+
+async def _special_deadline_reminders(context, assignments, now) -> int:
+    """24h & 1h before the special deadline, DM users who haven't locked the
+    champion / best-player / top-scorer yet. One bulk read; deduped per window."""
+    if not SPECIAL_DEADLINE_DT:
+        return 0
+    hrs = (SPECIAL_DEADLINE_DT - now).total_seconds() / 3600.0
+    window = 24 if 1 < hrs <= 24 else (1 if 0 < hrs <= 1 else None)
+    if window is None:
+        return 0
+    cols = [info["col"] for info in assignments.values()]
+    try:
+        locked = await _run(_sheet(context).special_locked_by_col, cols)
+    except Exception as e:
+        logging.warning("Special reminder: read failed: %s", e)
+        return 0
+    targets = [(CHAMPION_ROW, "🏆 قهرمان جام"), (BESTPLAYER_ROW, "🌟 بهترین بازیکن تورنمنت"), (TOPSCORER_ROW, "⚽️ آقای گل")]
+    sent = 0
+    for uid, info in assignments.items():
+        if store.was_reminded(uid, _SPECIAL_REM_ROW, window):
+            continue
+        have = locked.get(info["col"], {})
+        missing = [lbl for r, lbl in targets if r not in have]
+        if not missing:
+            continue
+        try:
+            await context.bot.send_message(
+                chat_id=uid,
+                text=_special_reminder_text(window, info["name"], missing),
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            store.mark_reminded(uid, _SPECIAL_REM_ROW, window)
+            sent += 1
+        except Exception as e:
+            logging.warning("Special reminder: send to %s failed: %s", uid, e)
+    return sent
+
+
 async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
     """Every REMINDER_CHECK_MINUTES: DM each linked user who hasn't predicted a
     match yet, when it's 24h / 3h / 1h away. One reminder per (user, match,
-    window). Needs the match's kickoff time to be known."""
+    window). Also fires the special-prediction deadline reminders (24h & 1h)."""
     sheet = _sheet(context)
     matches = await _run(sheet.matches)
     now = datetime.now(timezone.utc)
@@ -918,43 +1062,47 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
     ]
     due = [(m, _window_for(hrs)) for m, hrs in upcoming]
     due = [(m, w) for m, w in due if w is not None]
-    if not due:
-        return
 
     assignments = store.all_assignments()
     if not assignments:
         return
 
+    sent = 0
+    # ── Match reminders ──────────────────────────────────────────────────
     # Read EVERYONE's predicted rows in ONE bulk call. Reading per-user (2 reads
     # each) blew the Sheets read-quota (60/min) with many players, and the old
     # fallback treated a failed read as "predicted nothing" — so people who HAD
     # predicted got false "you didn't predict" nudges. Now: if the bulk read
-    # fails, skip the whole cycle rather than risk a wrong reminder.
-    cols = [info["col"] for info in assignments.values()]
-    try:
-        pred_by_col = await _run(sheet.predicted_rows_for_cols, cols)
-    except Exception as e:
-        logging.warning("Reminder: bulk prediction read failed, skipping this cycle: %s", e)
-        return
-    predicted = {uid: pred_by_col.get(info["col"], set()) for uid, info in assignments.items()}
+    # fails, skip just the match nudges rather than risk a wrong reminder.
+    if due:
+        cols = [info["col"] for info in assignments.values()]
+        try:
+            pred_by_col = await _run(sheet.predicted_rows_for_cols, cols)
+        except Exception as e:
+            logging.warning("Reminder: bulk prediction read failed, skipping match nudges: %s", e)
+            pred_by_col = None
+        if pred_by_col is not None:
+            predicted = {uid: pred_by_col.get(info["col"], set()) for uid, info in assignments.items()}
+            for m, window in due:
+                for uid, info in assignments.items():
+                    if m["row"] in predicted.get(uid, set()):
+                        continue  # already predicted — no nudge
+                    if store.was_reminded(uid, m["row"], window):
+                        continue  # already nudged for this window
+                    try:
+                        await context.bot.send_message(
+                            chat_id=uid,
+                            text=_reminder_text(window, info["name"], m["home"], m["away"], m["kickoff"]),
+                            parse_mode=ParseMode.MARKDOWN,
+                        )
+                        store.mark_reminded(uid, m["row"], window)
+                        sent += 1
+                    except Exception as e:
+                        logging.warning("Reminder: send to %s failed: %s", uid, e)
 
-    sent = 0
-    for m, window in due:
-        for uid, info in assignments.items():
-            if m["row"] in predicted.get(uid, set()):
-                continue  # already predicted — no nudge
-            if store.was_reminded(uid, m["row"], window):
-                continue  # already nudged for this window
-            try:
-                await context.bot.send_message(
-                    chat_id=uid,
-                    text=_reminder_text(window, info["name"], m["home"], m["away"], m["kickoff"]),
-                    parse_mode=ParseMode.MARKDOWN,
-                )
-                store.mark_reminded(uid, m["row"], window)
-                sent += 1
-            except Exception as e:
-                logging.warning("Reminder: send to %s failed: %s", uid, e)
+    # ── Special-prediction deadline reminders (24h & 1h before) ──────────
+    sent += await _special_deadline_reminders(context, assignments, now)
+
     if sent:
         logging.info("Sent %d reminder(s).", sent)
 
