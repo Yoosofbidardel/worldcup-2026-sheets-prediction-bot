@@ -37,7 +37,7 @@ from telegram.ext import (
 
 import api_client
 import store
-from config import ADMIN_IDS, DISPLAY_TZ, PREDLOG_FILE, REMINDER_WINDOWS_HOURS
+from config import ADMIN_IDS, DISPLAY_TZ, PREDLOG_FILE, REMINDER_WINDOWS_HOURS, TOP_GAINERS_COUNT
 from teams_fa import fa as _team_fa
 
 MAX_SCORE = 20  # cap for the +/- stepper
@@ -977,17 +977,22 @@ async def cmd_setgroup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def daily_analysis_job(context: ContextTypes.DEFAULT_TYPE):
-    """09:00 Tehran: find yesterday's top-3 point gainers, tag them, ask for analysis."""
+_GAINER_MEDALS = ["🥇", "🥈", "🥉", "🏅", "🏅"]
+
+
+async def _post_top_gainers(context: ContextTypes.DEFAULT_TYPE):
+    """Post yesterday's top point-gainers to the group: tag them, congratulate,
+    and ask them to analyze today's matches. Compares each player's total to the
+    previous morning's snapshot, then re-baselines. TOP_GAINERS_COUNT people
+    (3 for Katan, 2 for MAKA via .env). Runs right after the morning fixtures."""
     gid = store.get_group_id()
     if not gid:
         return
-    sheet = _sheet(context)
-    standings = await _run(sheet.standings)
+    standings = await _run(_sheet(context).standings)
     prev = store.get_snapshot()
-    store.set_snapshot({str(e["col"]): e["total"] for e in standings})  # new baseline
+    store.set_snapshot({str(e["col"]): e["total"] for e in standings})  # new daily baseline
     if not prev:
-        return  # first run — baseline set, nothing to compare yet
+        return  # first run after /setgroup — baseline set, nothing to compare yet
     deltas = []
     for e in standings:
         p = prev.get(str(e["col"]))
@@ -997,21 +1002,27 @@ async def daily_analysis_job(context: ContextTypes.DEFAULT_TYPE):
         if d > 0.0001:
             deltas.append((e, d))
     if not deltas:
-        return
+        return  # nobody gained points since yesterday
     deltas.sort(key=lambda x: x[1], reverse=True)
     col_uid = _col_uid_map()
-    medals = ["🥇", "🥈", "🥉"]
-    lines = ["🌅 صبح بخیر بچه‌ها! 👋", "🏅 نفرات برترِ امتیازگیریِ دیروز:\n"]
-    for i, (e, d) in enumerate(deltas[:3]):
-        lines.append(f"{medals[i]} {_mention(e['name'], col_uid.get(e['col']))} (+{_iso(_fmt_total(d))})")
+    lines = [
+        "🌅 صبح‌تون بخیر و شادی، رفقای گُل! 👋",
+        "🏅 دیشب این عزیزان بیشترین امتیازو وردشتِس:\n",
+    ]
+    for i, (e, d) in enumerate(deltas[:TOP_GAINERS_COUNT]):
+        medal = _GAINER_MEDALS[i] if i < len(_GAINER_MEDALS) else "🏅"
+        lines.append(f"{medal} {_mention(e['name'], col_uid.get(e['col']))} (+{_iso(_fmt_total(d))})")
     lines.append(
-        "\n🧠 لطفاً بگید چه‌جوری این پیش‌بینی‌ها رو زدید، "
-        "و اگه راجب بازیای بعدی نظری دارید با ما در میون بذارید! 👀⚽️"
+        "\nدمتون گرم، تبریک می‌گم بهتون! 🎉 د حالا که اینقده خوش‌فکرید، "
+        "بی‌زحمت بازی‌های امروزو یه تحلیل کنید واسه‌مون ببینیم نظرتون چیه 👀⚽️"
     )
     try:
-        await context.bot.send_message(chat_id=gid, text=_rtl("\n".join(lines)), parse_mode=ParseMode.MARKDOWN)
+        await context.bot.send_message(
+            chat_id=gid, text=_rtl("\n".join(lines)),
+            parse_mode=ParseMode.MARKDOWN, **_thread_kw(),
+        )
     except Exception as e:
-        logging.warning("Daily analysis post failed: %s", e)
+        logging.warning("Top-gainers post failed: %s", e)
 
 
 async def _match_predictions_text(context, m) -> str:
@@ -1122,7 +1133,8 @@ async def group_announce_job(context: ContextTypes.DEFAULT_TYPE):
 
 # ── Daily 9am: the next 24 hours' fixtures ────────────────────────────────
 async def daily_fixtures_job(context: ContextTypes.DEFAULT_TYPE):
-    """Each morning, post the matches kicking off in the next 24h to the group."""
+    """Each morning: post the next-24h fixtures, then congratulate & tag
+    yesterday's top point-gainers and ask them to analyze today's matches."""
     gid = store.get_group_id()
     if not gid:
         return
@@ -1132,17 +1144,18 @@ async def daily_fixtures_job(context: ContextTypes.DEFAULT_TYPE):
         m for m in await _run(_sheet(context).matches)
         if m["kickoff"] and now < m["kickoff"] <= horizon and m["actual_home"] is None
     ]
-    if not upcoming:
-        return
-    upcoming.sort(key=lambda m: m["kickoff"])
-    lines = ["☀️ *بازی‌های ۲۴ ساعتِ آینده* ⚽️\n"]
-    for m in upcoming:
-        lines.append(f"⚽️ {_team(m['home'])} 🆚 {_team(m['away'])}  ⏰ {_fmt_kickoff(m['kickoff'])}")
-    lines.append("\n⏳ یادتون نره پیش‌بینی‌هاتونو ثبت کنید! 🎯")
-    try:
-        await context.bot.send_message(chat_id=gid, text=_rtl("\n".join(lines)), parse_mode=ParseMode.MARKDOWN, **_thread_kw())
-    except Exception as e:
-        logging.warning("Daily fixtures post failed: %s", e)
+    if upcoming:
+        upcoming.sort(key=lambda m: m["kickoff"])
+        lines = ["☀️ *بازی‌های ۲۴ ساعتِ آینده* ⚽️\n"]
+        for m in upcoming:
+            lines.append(f"⚽️ {_team(m['home'])} 🆚 {_team(m['away'])}  ⏰ {_fmt_kickoff(m['kickoff'])}")
+        lines.append("\n⏳ یادتون نره پیش‌بینی‌هاتونو ثبت کنید! 🎯")
+        try:
+            await context.bot.send_message(chat_id=gid, text=_rtl("\n".join(lines)), parse_mode=ParseMode.MARKDOWN, **_thread_kw())
+        except Exception as e:
+            logging.warning("Daily fixtures post failed: %s", e)
+    # Then: yesterday's top gainers (congratulate, tag, ask for today's analysis).
+    await _post_top_gainers(context)
 
 
 # ── Admin on-demand controls ──────────────────────────────────────────────
