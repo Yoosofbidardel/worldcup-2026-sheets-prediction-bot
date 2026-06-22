@@ -1091,22 +1091,39 @@ async def group_announce_job(context: ContextTypes.DEFAULT_TYPE):
 _GAINER_MEDALS = ["🥇", "🥈", "🥉", "🏅", "🏅"]
 
 
-async def _post_top_gainers(context: ContextTypes.DEFAULT_TYPE, rebaseline: bool = True) -> str:
-    """Post yesterday's top point-gainers to the group: tag them, congratulate,
-    and ask them to analyze today's matches. Compares each player's total to the
-    previous morning's snapshot. TOP_GAINERS_COUNT people (2 for MAKA, 3 for Katan
-    via .env). The daily morning job re-baselines (rebaseline=True); the admin
-    on-demand command passes rebaseline=False so it doesn't shift the daily window.
-    Returns a short status for interactive callers."""
+def _gainers_message(items: list) -> str:
+    """Build the 'yesterday's top gainers' group post from stored items
+    (list of {col,name,points}). Re-resolves the tag each time it's posted."""
+    col_uid = _col_uid_map()
+    lines = [
+        "🌅 صبح بخیر بچه‌ها! 👋",
+        "🏅 دیروز این عزیزا بیشترین امتیازو گرفتن:\n",
+    ]
+    for i, it in enumerate(items):
+        medal = _GAINER_MEDALS[i] if i < len(_GAINER_MEDALS) else "🏅"
+        lines.append(
+            f"{medal} {_mention(it['name'], col_uid.get(it['col']))} — "
+            f"دیروز *{_iso(_fmt_total(it['points']))}* امتیاز گرفت 📈"
+        )
+    lines.append(
+        "\nتبریک، دمتون گرم! 🎉 حالا که دستتون داغه، بی‌زحمت بازی‌های امروزو "
+        "یه تحلیل کنید واسه‌مون ببینیم نظرتون چیه 👀⚽️"
+    )
+    return _rtl("\n".join(lines))
+
+
+async def _post_daily_gainers(context: ContextTypes.DEFAULT_TYPE):
+    """Daily morning: compute the last 24h point-gainers (current totals vs the
+    previous morning's snapshot), re-baseline the snapshot, store the result so
+    the admin can re-post it on demand, then post it. TOP_GAINERS_COUNT people."""
     gid = store.get_group_id()
     if not gid:
-        return "no_group"
+        return
     standings = await _run(_sheet(context).standings)
     prev = store.get_snapshot()
-    if rebaseline:
-        store.set_snapshot({str(e["col"]): e["total"] for e in standings})  # new daily baseline
+    store.set_snapshot({str(e["col"]): e["total"] for e in standings})  # new daily baseline
     if not prev:
-        return "no_baseline"  # first run after /setgroup — nothing to compare yet
+        return  # first run after /setgroup — baseline set, nothing to compare yet
     deltas = []
     for e in standings:
         p = prev.get(str(e["col"]))
@@ -1116,48 +1133,41 @@ async def _post_top_gainers(context: ContextTypes.DEFAULT_TYPE, rebaseline: bool
         if d > 0.0001:
             deltas.append((e, d))
     if not deltas:
-        return "no_gainers"  # nobody gained points since yesterday
+        return  # nobody gained points yesterday
     deltas.sort(key=lambda x: x[1], reverse=True)
-    col_uid = _col_uid_map()
-    lines = [
-        "🌅 صبح بخیر بچه‌ها! 👋",
-        "🏅 دیروز این عزیزا بیشترین امتیازو گرفتن:\n",
-    ]
-    for i, (e, d) in enumerate(deltas[:TOP_GAINERS_COUNT]):
-        medal = _GAINER_MEDALS[i] if i < len(_GAINER_MEDALS) else "🏅"
-        lines.append(f"{medal} {_mention(e['name'], col_uid.get(e['col']))} — دیروز *{_iso(_fmt_total(d))}* امتیاز گرفت 📈")
-    lines.append(
-        "\nتبریک، دمتون گرم! 🎉 حالا که دستتون داغه، بی‌زحمت بازی‌های امروزو "
-        "یه تحلیل کنید واسه‌مون ببینیم نظرتون چیه 👀⚽️"
-    )
+    items = [{"col": e["col"], "name": e["name"], "points": d} for e, d in deltas[:TOP_GAINERS_COUNT]]
+    store.set_last_gainers(items)  # so /topgainers can re-post this exact report
     try:
         await context.bot.send_message(
-            chat_id=gid, text=_rtl("\n".join(lines)),
+            chat_id=gid, text=_gainers_message(items),
             parse_mode=ParseMode.MARKDOWN, **_thread_kw(),
         )
-        return "posted"
     except Exception as e:
-        logging.warning("Top-gainers post failed: %s", e)
-        return "error"
+        logging.warning("Daily gainers post failed: %s", e)
 
 
 async def cmd_topgainers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: post yesterday's top point-gainers to the group on demand (without
-    disturbing the daily morning window)."""
+    """Admin: re-post the latest daily 'yesterday's top gainers' report to the
+    group on demand. Re-posts the stored morning result (not a fresh cumulative
+    calc), so the number is always the real per-day gain — never a long total."""
     if not _is_admin(update.effective_user.id):
         return
     if not store.get_group_id():
         await _say(update, "⚠️ هنوز هیچ گروهی ثبت نشده. اول داخل گروه `/setgroup` رو بزن.")
         return
-    status = await _post_top_gainers(context, rebaseline=False)
-    msg = {
-        "posted": "✅ نفراتِ برترِ دیروز تو گروه اعلام شدن. 🏅",
-        "no_baseline": "🤔 هنوز مبنای مقایسه‌ای ندارم. صبر کن تا اولین گزارشِ صبحگاهی ثبت شه.",
-        "no_gainers": "🤷 از دیروز تا الان کسی امتیازی نگرفته که اعلام کنم.",
-        "no_group": "⚠️ هنوز گروهی ثبت نشده. اول داخل گروه `/setgroup` رو بزن.",
-        "error": "❌ نشد بفرستم تو گروه. مطمئن شو ربات تو گروهه و اجازه‌ی ارسال داره.",
-    }.get(status, "انجام شد.")
-    await _say(update, msg)
+    items = store.get_last_gainers()
+    if not items:
+        await _say(update, "🤔 هنوز گزارشِ روزانه‌ای ثبت نشده. اولین گزارش فردا ساعت ۹ صبح خودکار میاد و بعد می‌تونی همین‌جا دوباره بفرستیش.")
+        return
+    try:
+        await context.bot.send_message(
+            chat_id=store.get_group_id(), text=_gainers_message(items),
+            parse_mode=ParseMode.MARKDOWN, **_thread_kw(),
+        )
+        await _say(update, "✅ نفراتِ برترِ دیروز تو گروه اعلام شدن. 🏅")
+    except Exception as e:
+        logging.warning("Top-gainers repost failed: %s", e)
+        await _say(update, "❌ نشد بفرستم تو گروه. مطمئن شو ربات تو گروهه و اجازه‌ی ارسال داره.")
 
 
 async def daily_fixtures_job(context: ContextTypes.DEFAULT_TYPE):
@@ -1183,7 +1193,7 @@ async def daily_fixtures_job(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.warning("Daily fixtures post failed: %s", e)
     # Then: yesterday's top gainers (congratulate, tag, ask for today's analysis).
-    await _post_top_gainers(context)
+    await _post_daily_gainers(context)
 
 
 # ── Admin on-demand controls ──────────────────────────────────────────────

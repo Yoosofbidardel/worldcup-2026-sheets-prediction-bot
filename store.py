@@ -134,7 +134,7 @@ def mark_seen_intro(user_id: int):
 
 # ── Group announcements state ────────────────────────────────────────────
 def _load_announce() -> dict:
-    base = {"group_id": None, "thread_id": None, "snapshot": {}, "announced": [], "started": [], "auto_leaderboard": True}
+    base = {"group_id": None, "thread_id": None, "snapshot": {}, "announced": [], "started": [], "auto_leaderboard": True, "last_gainers": []}
     if not os.path.exists(ANNOUNCE_FILE):
         return base
     try:
@@ -191,6 +191,19 @@ def set_started(rows):
     with _ann_lock:
         data = _load_announce()
         data["started"] = sorted(set(int(r) for r in rows))
+        _save_announce(data)
+
+
+def get_last_gainers() -> list:
+    """The most recent daily top-gainers result (list of {col,name,points}), so
+    the admin's on-demand command can re-post the latest morning report."""
+    return _load_announce().get("last_gainers", [])
+
+
+def set_last_gainers(items: list):
+    with _ann_lock:
+        data = _load_announce()
+        data["last_gainers"] = items
         _save_announce(data)
 
 
