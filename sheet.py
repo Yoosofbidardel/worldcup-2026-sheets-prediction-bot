@@ -12,6 +12,7 @@ from gspread.utils import rowcol_to_a1
 
 from api_client import canon
 from config import (
+    CHAMPION_ROW,
     EXCLUDED_NAMES,
     FIRST_SLOT_COL,
     GOOGLE_CREDENTIALS_FILE,
@@ -306,9 +307,52 @@ class SheetClient:
             self._ws.update_acell(rowcol_to_a1(row, base_col), home)
             self._ws.update_acell(rowcol_to_a1(row, base_col + 1), away)
 
-    def set_special_prediction(self, base_col: int, row: int, text: str):
+    def set_special_prediction(self, base_col: int, row: int, text: str, cell2: bool = False):
+        """Write a special prediction. cell2=True writes the participant's SECOND
+        cell (base_col+1) — used for the champion's post-deadline pick, which is
+        kept separate from the locked pre-deadline pick in base_col."""
+        col = base_col + 1 if cell2 else base_col
         with self._lock:
-            self._ws.update_acell(rowcol_to_a1(row, base_col), text)
+            self._ws.update_acell(rowcol_to_a1(row, col), text)
+
+    def special_locked_by_col(self, cols) -> dict:
+        """{base_col: {special_row: locked_value}} for many participants in ONE
+        read of the special rows. Used by the deadline reminder (quota-friendly)."""
+        cols = sorted(set(cols))
+        if not cols:
+            return {}
+        rows = sorted(SPECIAL_ROWS)
+        first_row, last_row = rows[0], rows[-1]
+        last_col = max(cols)
+        last_letter = rowcol_to_a1(1, last_col)[:-1]
+        with self._lock:
+            grid = self._ws.get(
+                f"A{first_row}:{last_letter}{last_row}",
+                value_render_option="UNFORMATTED_VALUE",
+            )
+        out = {c: {} for c in cols}
+        for r in rows:
+            i = r - first_row
+            rowvals = grid[i] if i < len(grid) else []
+            for c in cols:
+                v = rowvals[c - 1] if c - 1 < len(rowvals) else None
+                if not _blank(v):
+                    out[c][r] = str(v).strip()
+        return out
+
+    def champion_cells(self, base_col: int) -> tuple:
+        """(locked, live) champion picks for a participant: the pre-deadline pick
+        in base_col and the post-deadline pick in base_col+1 (or None each)."""
+        row = CHAMPION_ROW
+        with self._lock:
+            vals = self._ws.batch_get(
+                [rowcol_to_a1(row, base_col), rowcol_to_a1(row, base_col + 1)],
+                value_render_option="UNFORMATTED_VALUE",
+            )
+        def first(block):
+            v = block[0][0] if block and block[0] else None
+            return None if _blank(v) else str(v).strip()
+        return first(vals[0]), first(vals[1])
 
     # ── Kickoff times (filled from the API; admin can override in the sheet) ─
     def sync_kickoffs(self, kickoff_map: dict) -> dict:
