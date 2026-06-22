@@ -205,6 +205,7 @@ ADMIN_GUIDE = (
     "👑 *مخصوص ادمین*\n"
     "• «📢 پیام به همه» — یه پیام بده به همه‌ی بچه‌ها (تو پیویِ هرکی).\n"
     "• «📨 پیام تو گروه» — یه پیام از طرفِ ربات بذار تو گروه.\n"
+    "• `/topgainers` — نفراتِ برترِ امتیازگیریِ دیروز رو همین الان تو گروه اعلام کن.\n"
     "• «📊 جدول امتیازات» — جدولو ببین (فقط خودت می‌بینی).\n"
     "• «📤 ارسال جدول» — جدولو همین‌جا (گروه یا پیوی) بفرست.\n"
     "• «📤 ارسال پیش‌بینی‌ها» — پیش‌بینیِ یه بازی رو همین‌جا بفرست.\n"
@@ -980,19 +981,22 @@ async def cmd_setgroup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 _GAINER_MEDALS = ["🥇", "🥈", "🥉", "🏅", "🏅"]
 
 
-async def _post_top_gainers(context: ContextTypes.DEFAULT_TYPE):
+async def _post_top_gainers(context: ContextTypes.DEFAULT_TYPE, rebaseline: bool = True) -> str:
     """Post yesterday's top point-gainers to the group: tag them, congratulate,
     and ask them to analyze today's matches. Compares each player's total to the
-    previous morning's snapshot, then re-baselines. TOP_GAINERS_COUNT people
-    (3 for Katan, 2 for MAKA via .env). Runs right after the morning fixtures."""
+    previous morning's snapshot. TOP_GAINERS_COUNT people (3 for Katan, 2 for MAKA
+    via .env). The daily morning job re-baselines (rebaseline=True); the admin
+    on-demand command passes rebaseline=False so it doesn't shift the daily window.
+    Returns a short status for interactive callers."""
     gid = store.get_group_id()
     if not gid:
-        return
+        return "no_group"
     standings = await _run(_sheet(context).standings)
     prev = store.get_snapshot()
-    store.set_snapshot({str(e["col"]): e["total"] for e in standings})  # new daily baseline
+    if rebaseline:
+        store.set_snapshot({str(e["col"]): e["total"] for e in standings})  # new daily baseline
     if not prev:
-        return  # first run after /setgroup — baseline set, nothing to compare yet
+        return "no_baseline"  # first run after /setgroup — nothing to compare yet
     deltas = []
     for e in standings:
         p = prev.get(str(e["col"]))
@@ -1002,7 +1006,7 @@ async def _post_top_gainers(context: ContextTypes.DEFAULT_TYPE):
         if d > 0.0001:
             deltas.append((e, d))
     if not deltas:
-        return  # nobody gained points since yesterday
+        return "no_gainers"  # nobody gained points since yesterday
     deltas.sort(key=lambda x: x[1], reverse=True)
     col_uid = _col_uid_map()
     lines = [
@@ -1021,8 +1025,29 @@ async def _post_top_gainers(context: ContextTypes.DEFAULT_TYPE):
             chat_id=gid, text=_rtl("\n".join(lines)),
             parse_mode=ParseMode.MARKDOWN, **_thread_kw(),
         )
+        return "posted"
     except Exception as e:
         logging.warning("Top-gainers post failed: %s", e)
+        return "error"
+
+
+async def cmd_topgainers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: post yesterday's top point-gainers to the group on demand (without
+    disturbing the daily morning window)."""
+    if not _is_admin(update.effective_user.id):
+        return
+    if not store.get_group_id():
+        await _say(update, "⚠️ هنوز هیچ گروهی ثبت نشده‌ها. اول تو خودِ گروه `/setgroup` رو بزن.")
+        return
+    status = await _post_top_gainers(context, rebaseline=False)
+    msg = {
+        "posted": "✅ نفراتِ برترِ دیروز تو گروه اعلام شدِس. 🏅",
+        "no_baseline": "🤔 هنوز چیزی واسه مقایسه ندارم. صبر کن تا اولین گزارشِ صبح ثبت شه.",
+        "no_gainers": "🤷 اِز دیروز تا حالا کسی امتیازی نگرفتِس که اعلام کنم.",
+        "no_group": "⚠️ هنوز گروهی ثبت نشده. اول تو گروه `/setgroup` رو بزن.",
+        "error": "❌ نشد بذارم تو گروه. مطمئن شو ربات تو گروهه و اجازه‌ی ارسال داره.",
+    }.get(status, "انجام شد.")
+    await _say(update, msg)
 
 
 async def _match_predictions_text(context, m) -> str:
@@ -1264,6 +1289,7 @@ def register(app: Application):
     app.add_handler(CommandHandler("assignments", cmd_assignments))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CommandHandler("sendgroup", cmd_sendgroup))
+    app.add_handler(CommandHandler("topgainers", cmd_topgainers))
     app.add_handler(CommandHandler("setgroup", cmd_setgroup))
     app.add_handler(CommandHandler("sendtable", cmd_send_table))
     app.add_handler(CommandHandler("sendpreds", cmd_send_preds))
