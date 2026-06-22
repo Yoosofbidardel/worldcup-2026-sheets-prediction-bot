@@ -925,14 +925,18 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
     if not assignments:
         return
 
-    # Read each user's predicted rows once (cheap: 2 ranges per user).
-    predicted = {}
-    for uid, info in assignments.items():
-        try:
-            predicted[uid] = await _run(sheet.predicted_match_rows, info["col"])
-        except Exception as e:
-            logging.warning("Reminder: couldn't read predictions for %s: %s", uid, e)
-            predicted[uid] = set()
+    # Read EVERYONE's predicted rows in ONE bulk call. Reading per-user (2 reads
+    # each) blew the Sheets read-quota (60/min) with many players, and the old
+    # fallback treated a failed read as "predicted nothing" — so people who HAD
+    # predicted got false "you didn't predict" nudges. Now: if the bulk read
+    # fails, skip the whole cycle rather than risk a wrong reminder.
+    cols = [info["col"] for info in assignments.values()]
+    try:
+        pred_by_col = await _run(sheet.predicted_rows_for_cols, cols)
+    except Exception as e:
+        logging.warning("Reminder: bulk prediction read failed, skipping this cycle: %s", e)
+        return
+    predicted = {uid: pred_by_col.get(info["col"], set()) for uid, info in assignments.items()}
 
     sent = 0
     for m, window in due:

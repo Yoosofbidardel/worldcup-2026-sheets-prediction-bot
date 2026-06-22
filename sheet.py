@@ -207,6 +207,32 @@ class SheetClient:
                 out.add(r)
         return out
 
+    def predicted_rows_for_cols(self, cols) -> dict:
+        """{base_col: set(match rows predicted)} for many participants in ONE read.
+
+        The per-user predicted_match_rows() does 2 reads each; calling it for
+        every participant blows the Sheets read-quota (60/min), so the reminder
+        job uses this single bulk read of the whole prediction grid instead."""
+        cols = sorted(set(cols))
+        if not cols:
+            return {}
+        last_col = max(cols) + 1
+        last_letter = rowcol_to_a1(1, last_col)[:-1]
+        with self._lock:
+            grid = self._ws.get(
+                f"A{MATCH_FIRST_ROW}:{last_letter}{MATCH_LAST_ROW}",
+                value_render_option="UNFORMATTED_VALUE",
+            )
+        out = {c: set() for c in cols}
+        for i, rowvals in enumerate(grid):
+            r = MATCH_FIRST_ROW + i
+            for c in cols:
+                h = rowvals[c - 1] if c - 1 < len(rowvals) else None
+                a = rowvals[c] if c < len(rowvals) else None
+                if not _blank(h) and not _blank(a):
+                    out[c].add(r)
+        return out
+
     def match_all_predictions(self, row: int) -> list[dict]:
         """Every participant's prediction for one match row: [{name, home, away}]
         for slots that filled both cells. Reads the whole row in one call."""
