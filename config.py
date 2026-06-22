@@ -97,5 +97,8 @@ PREDLOG_FILE = os.path.join(os.path.dirname(__file__), "predictions_log.jsonl")
 ANNOUNCE_FILE = os.path.join(os.path.dirname(__file__), "announce.json")
 # Daily "yesterday's top scorers" call fires at this hour, Tehran time.
 ANALYSIS_HOUR_TEHRAN = int(os.getenv("ANALYSIS_HOUR_TEHRAN", "9"))
+# How many of yesterday's top point-gainers to congratulate/tag each morning
+# (env-configurable per league: e.g. 3 for Katan, 2 for MAKA).
+TOP_GAINERS_COUNT = int(os.getenv("TOP_GAINERS_COUNT", "3"))
 # How often to check for newly-finished matches to post the leaderboard (minutes).
 ANNOUNCE_CHECK_MINUTES = float(os.getenv("ANNOUNCE_CHECK_MINUTES", "15"))
