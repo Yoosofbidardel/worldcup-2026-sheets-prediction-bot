@@ -74,9 +74,33 @@ SPECIAL_ROWS = {
 }
 # Named rows for the deadline logic below.
 CHAMPION_ROW = SPECIAL_BASE_ROW          # has the +5 early-lock bonus + a 2nd cell
-BESTPLAYER_ROW = SPECIAL_BASE_ROW + 1    # hard-closes at the deadline
-TOPSCORER_ROW = SPECIAL_BASE_ROW + 2     # hard-closes at the deadline
+BESTPLAYER_ROW = SPECIAL_BASE_ROW + 1
+TOPSCORER_ROW = SPECIAL_BASE_ROW + 2
 CHAMPION_BONUS = 5                       # extra points for a locked-in correct champion
+
+# Two-cell "early-lock bonus" specials: row -> bonus points. Such a row stays
+# open until CHAMPION_FINAL_DEADLINE; a pick made by SPECIAL_DEADLINE locks in
+# the FIRST cell (earns the bonus if correct & unchanged), later changes go to
+# the SECOND cell (no bonus). Any special row NOT listed here hard-closes at
+# SPECIAL_DEADLINE instead. Default: champion only. Env override (e.g. Katan adds
+# best-player & top-scorer): BONUS_SPECIAL_ROWS="107:5,108:2,109:2".
+def _parse_bonus_rows(s: str) -> dict:
+    out = {}
+    for part in s.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        r, _, b = part.partition(":")
+        try:
+            out[int(r)] = int(b)
+        except ValueError:
+            pass
+    return out
+
+SPECIAL_BONUS = _parse_bonus_rows(
+    os.getenv("BONUS_SPECIAL_ROWS", f"{CHAMPION_ROW}:{CHAMPION_BONUS}")
+)
+BONUS_SPECIAL_ROWS = set(SPECIAL_BONUS)
 
 # ── Special-prediction deadline = start of group-stage round 3 ────────────
 # Top-scorer & best-player LOCK here (can't predict/change after). Champion can

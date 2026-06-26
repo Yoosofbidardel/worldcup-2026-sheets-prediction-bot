@@ -340,10 +340,9 @@ class SheetClient:
                     out[c][r] = str(v).strip()
         return out
 
-    def champion_cells(self, base_col: int) -> tuple:
-        """(locked, live) champion picks for a participant: the pre-deadline pick
-        in base_col and the post-deadline pick in base_col+1 (or None each)."""
-        row = CHAMPION_ROW
+    def special_cells(self, base_col: int, row: int = CHAMPION_ROW) -> tuple:
+        """(locked, live) two-cell picks for a bonus special row: the pre-deadline
+        pick in base_col and the post-deadline pick in base_col+1 (or None each)."""
         with self._lock:
             vals = self._ws.batch_get(
                 [rowcol_to_a1(row, base_col), rowcol_to_a1(row, base_col + 1)],
