@@ -620,8 +620,10 @@ async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pt = f"  🏅 {_fmt_total(pts[row])} امتیاز" if s and not s["open"] and row in pts else ""
             lines.append(f"🏆 {s['label'] if s else row}: {_iso(simple_specials[row])}{pt}")
     # two-cell bonus specials: effective pick (post-deadline change wins) + status
+    # both cells come from user_predictions (no extra reads)
     for row in sorted(BONUS_SPECIAL_ROWS):
-        locked, live = await _run(sheet.special_cells, a["col"], row)
+        locked = preds["specials"].get(row)
+        live = preds.get("specials_live", {}).get(row)
         eff = live or locked
         if not eff:
             continue
