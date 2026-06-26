@@ -5,12 +5,41 @@ The bot only ever WRITES into the two prediction cells of a participant's
 all scoring stays exactly as defined in the sheet and recalculates live.
 """
 import threading
+import time
 from datetime import datetime, timezone
 
 import gspread
 from gspread.utils import rowcol_to_a1
 
 from api_client import canon
+
+
+# Google Sheets enforces ~60 read/write requests per minute per user. A burst of
+# requests (e.g. the announce/reminder jobs, or several /mypredictions at once)
+# can momentarily exceed it and return HTTP 429. Without a retry the whole
+# handler crashes and the user gets no reply, so wrap gspread calls to back off
+# and retry a 429 a few times.
+_RETRY_METHODS = (
+    "get", "batch_get", "get_values", "get_all_values",
+    "row_values", "col_values", "acell",
+    "update", "update_acell", "batch_update",
+)
+
+
+def _retrying(fn):
+    def wrapper(*args, **kwargs):
+        delay = 1.0
+        for attempt in range(5):
+            try:
+                return fn(*args, **kwargs)
+            except gspread.exceptions.APIError as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if (status == 429 or "429" in str(e)) and attempt < 4:
+                    time.sleep(delay)
+                    delay = min(delay * 2, 8.0)
+                    continue
+                raise
+    return wrapper
 from config import (
     CHAMPION_ROW,
     EXCLUDED_NAMES,
@@ -52,6 +81,12 @@ class SheetClient:
     def __init__(self):
         self._gc = gspread.service_account(filename=GOOGLE_CREDENTIALS_FILE)
         self._ws = self._gc.open_by_key(GOOGLE_SHEET_ID).worksheet(WORKSHEET_NAME)
+        # Wrap the worksheet's API methods so a transient 429 is retried with
+        # backoff instead of crashing the caller.
+        for _name in _RETRY_METHODS:
+            _orig = getattr(self._ws, _name, None)
+            if callable(_orig):
+                setattr(self._ws, _name, _retrying(_orig))
         self._slots: list[dict] | None = None
         self._lock = threading.RLock()  # serialize gspread/requests session access
 
@@ -140,12 +175,16 @@ class SheetClient:
 
     # ── Specials ─────────────────────────────────────────────────────────
     def specials(self) -> list[dict]:
+        # Read every special's answer cell (column C) in ONE call.
+        rows = sorted(SPECIAL_ROWS)
+        with self._lock:
+            block = self._ws.get(
+                f"C{rows[0]}:C{rows[-1]}", value_render_option="UNFORMATTED_VALUE"
+            )
         out = []
         for row, (label, pts) in SPECIAL_ROWS.items():
-            with self._lock:
-                actual = self._ws.acell(
-                    f"C{row}", value_render_option="UNFORMATTED_VALUE"
-                ).value
+            i = row - rows[0]
+            actual = block[i][0] if i < len(block) and block[i] else None
             out.append(
                 {
                     "row": row,
@@ -176,7 +215,10 @@ class SheetClient:
                 return block[i][0]
             return None
 
-        result = {"matches": {}, "specials": {}}
+        # 'specials' = locked/1st-cell pick (home col); 'specials_live' = 2nd-cell
+        # post-deadline pick (away col). Both come from the same two reads above,
+        # so /mypredictions needs no extra per-row calls.
+        result = {"matches": {}, "specials": {}, "specials_live": {}}
         for m in self.matches():
             r = m["row"]
             h, a = col_val(homes, r), col_val(aways, r)
@@ -186,6 +228,9 @@ class SheetClient:
             v = col_val(homes, row)
             if not _blank(v):
                 result["specials"][row] = str(v).strip()
+            lv = col_val(aways, row)
+            if not _blank(lv):
+                result["specials_live"][row] = str(lv).strip()
         return result
 
     def predicted_match_rows(self, base_col: int) -> set:
