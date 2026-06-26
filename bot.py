@@ -26,6 +26,7 @@ from telegram import (
     Update,
 )
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -275,14 +276,45 @@ async def _run(func, *args):
 
 
 # ── Small reply helpers that always go out RTL + Markdown ────────────────
+def _split_for_telegram(text: str, limit: int = 4000) -> list:
+    """Split text into <=limit-char chunks on line boundaries (Telegram caps a
+    message at 4096 chars). Splitting on whole lines keeps each line's Markdown
+    balanced, so no entity is broken across a chunk."""
+    chunks, cur = [], ""
+    for ln in text.split("\n"):
+        if cur and len(cur) + 1 + len(ln) > limit:
+            chunks.append(cur)
+            cur = ln
+        else:
+            cur = ln if not cur else cur + "\n" + ln
+    if cur:
+        chunks.append(cur)
+    return chunks or [""]
+
+
 async def _say(update: Update, text: str, **kw):
     kw.setdefault("parse_mode", ParseMode.MARKDOWN)
-    await update.message.reply_text(_rtl(text), **kw)
+    chunks = _split_for_telegram(_rtl(text))
+    for i, ch in enumerate(chunks):
+        k = dict(kw)
+        if i < len(chunks) - 1:  # attach the keyboard only to the final chunk
+            k.pop("reply_markup", None)
+        await update.message.reply_text(ch, **k)
 
 
 async def _edit(query, text: str, **kw):
     kw.setdefault("parse_mode", ParseMode.MARKDOWN)
-    await query.edit_message_text(_rtl(text), **kw)
+    parts = _split_for_telegram(_rtl(text))
+    try:
+        await query.edit_message_text(parts[0], **kw)
+    except BadRequest as e:
+        if "not modified" not in str(e).lower():
+            raise
+    # If it was too long for one message, send the rest as follow-up messages.
+    for ch in parts[1:]:
+        k = dict(kw)
+        k.pop("reply_markup", None)
+        await query.message.reply_text(ch, **k)
 
 
 def _stepper_kb(row, home_name, away_name, home, away):
