@@ -40,11 +40,13 @@ import store
 from config import (
     ADMIN_IDS,
     BESTPLAYER_ROW,
+    BONUS_SPECIAL_ROWS,
     CHAMPION_FINAL_DEADLINE_DT,
     CHAMPION_ROW,
     DISPLAY_TZ,
     PREDLOG_FILE,
     REMINDER_WINDOWS_HOURS,
+    SPECIAL_BONUS,
     SPECIAL_DEADLINE_DT,
     TOP_GAINERS_COUNT,
     TOPSCORER_ROW,
@@ -152,15 +154,13 @@ def _final_deadline_str() -> str:
 
 
 def _special_is_open(s: dict) -> bool:
-    """Whether a special prediction can currently be set/changed. Top-scorer &
-    best-player hard-close at the deadline; the champion stays editable until the
-    knockout stage starts (changing it after the first deadline just forfeits the
-    +5 bonus)."""
-    if s["row"] in (BESTPLAYER_ROW, TOPSCORER_ROW):
-        return s["open"] and not _deadline_passed()
-    if s["row"] == CHAMPION_ROW:
+    """Whether a special prediction can currently be set/changed. Two-cell bonus
+    rows (champion always; Katan also best-player & top-scorer) stay editable
+    until the knockout stage starts — a change after the first deadline just
+    forfeits the bonus. Any other special hard-closes at the first deadline."""
+    if s["row"] in BONUS_SPECIAL_ROWS:
         return s["open"] and not _champion_locked()
-    return s["open"]
+    return s["open"] and not _deadline_passed()
 
 
 _MEDALS = {0: "🥇", 1: "🥈", 2: "🥉"}
@@ -559,22 +559,23 @@ async def special_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _edit(query, "🔒 این پیش‌بینی پیدا نشد.")
         return
     if not _special_is_open(special):
-        when = _final_deadline_str() if row == CHAMPION_ROW else _deadline_str()
+        when = _final_deadline_str() if row in BONUS_SPECIAL_ROWS else _deadline_str()
         await _edit(query, f"⏰ مهلتِ این پیش‌بینی تموم شده ({when}). دیگه نمی‌شه ثبتش کرد. 🔒")
         return
     context.user_data["await"] = ("special", row)
     context.user_data["label"] = special["label"]
-    if row == CHAMPION_ROW and _deadline_passed():
+    bonus = _fa_num(SPECIAL_BONUS.get(row, 0))
+    if row in BONUS_SPECIAL_ROWS and _deadline_passed():
         msg = (
             f"🏆 *{special['label']}*\n\n"
-            "⚠️ مهلتِ قفلِ پیش‌بینی گذشته. می‌تونی عوضش کنی، ولی دیگه اون *۵ امتیازِ بونوسِ* قفل‌شدن بهت تعلق نمی‌گیره.\n"
-            "✍️ اسمِ تیمِ قهرمان رو بفرست."
+            f"⚠️ مهلتِ قفلِ پیش‌بینی گذشته. می‌تونی عوضش کنی، ولی دیگه اون *{bonus} امتیازِ بونوسِ* قفل‌شدن بهت تعلق نمی‌گیره.\n"
+            "✍️ جوابتو بفرست."
         )
-    elif row == CHAMPION_ROW:
+    elif row in BONUS_SPECIAL_ROWS:
         msg = (
             f"🏆 *{special['label']}*\n\n"
-            f"💡 اگه تا ددلاین ({_deadline_str()}) ثبتش کنی و دیگه عوضش نکنی، در صورتِ درست بودن *۵ امتیازِ اضافه* می‌گیری! 🤑\n"
-            "✍️ اسمِ تیمِ قهرمان رو بفرست."
+            f"💡 اگه تا ددلاین ({_deadline_str()}) ثبتش کنی و دیگه عوضش نکنی، در صورتِ درست بودن *{bonus} امتیازِ اضافه* می‌گیری! 🤑\n"
+            "✍️ جوابتو بفرست."
         )
     else:
         msg = f"🏆 *{special['label']}*\n\n✍️ جوابتو به‌صورت متن بفرست (مثلاً اسم یه تیم یا بازیکن)."
@@ -608,30 +609,36 @@ async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"⚽️ {_team(m['home'])} {score} {_team(m['away'])}{res}{pt}")
     else:
         lines.append("• هنوز هیچ بازی‌ای پیش‌بینی نکردی! 😴 برو پیش‌بینی کن تنبل‌خان 😏")
-    # Specials, except the champion (handled separately — it has two cells).
-    other_specials = {r: v for r, v in preds["specials"].items() if r != CHAMPION_ROW}
-    if other_specials:
+    # Simple specials (not two-cell bonus rows) shown plainly.
+    simple_specials = {r: v for r, v in preds["specials"].items() if r not in BONUS_SPECIAL_ROWS}
+    header_added = False
+    if simple_specials:
         lines.append("")
-        for row in sorted(other_specials):
+        header_added = True
+        for row in sorted(simple_specials):
             s = specials.get(row)
             pt = f"  🏅 {_fmt_total(pts[row])} امتیاز" if s and not s["open"] and row in pts else ""
-            lines.append(f"🏆 {s['label'] if s else row}: {_iso(other_specials[row])}{pt}")
-    # Champion: show the effective pick (post-deadline change wins) + bonus status.
-    locked, live = await _run(sheet.champion_cells, a["col"])
-    eff = live or locked
-    if eff:
-        cs = specials.get(CHAMPION_ROW)
-        clabel = cs["label"] if cs else "قهرمان جام"
+            lines.append(f"🏆 {s['label'] if s else row}: {_iso(simple_specials[row])}{pt}")
+    # Two-cell bonus specials: effective pick (post-deadline change wins) + status.
+    for row in sorted(BONUS_SPECIAL_ROWS):
+        locked, live = await _run(sheet.special_cells, a["col"], row)
+        eff = live or locked
+        if not eff:
+            continue
+        s = specials.get(row)
+        label = s["label"] if s else row
+        bonus = _fa_num(SPECIAL_BONUS.get(row, 0))
         if live:
             status = "  (بعد از ددلاین عوض شده — بدونِ بونوس)"
         elif _deadline_passed():
-            status = "  🔒 (قفل‌شده تا ددلاین — واجدِ ۵ امتیاز بونوس ✅)"
+            status = f"  🔒 (قفل‌شده — واجدِ {bonus} امتیاز بونوس ✅)"
         else:
-            status = "  💡 (تا ددلاین عوضش نکنی، ۵ امتیاز بونوس می‌گیری)"
-        cpt = f"  🏅 {_fmt_total(pts[CHAMPION_ROW])} امتیاز" if cs and not cs["open"] and CHAMPION_ROW in pts else ""
-        if not other_specials:
+            status = f"  💡 (تا ددلاین عوضش نکنی، {bonus} امتیاز بونوس می‌گیری)"
+        pt = f"  🏅 {_fmt_total(pts[row])} امتیاز" if s and not s["open"] and row in pts else ""
+        if not header_added:
             lines.append("")
-        lines.append(f"🏆 {clabel}: {_iso(eff)}{status}{cpt}")
+            header_added = True
+        lines.append(f"🏆 {label}: {_iso(eff)}{status}{pt}")
     await _say(update, "\n".join(lines))
 
 
@@ -722,20 +729,21 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _say(update, "😕 دیگه به هیچ اسمی وصل نیستی. با ادمین حرف بزن.")
         return
     label = context.user_data.get("label", "")
-    # Top-scorer & best-player hard-close at the deadline (guard in case the
-    # deadline passed while the user was typing).
-    if row in (BESTPLAYER_ROW, TOPSCORER_ROW) and _deadline_passed():
+    bonus = _fa_num(SPECIAL_BONUS.get(row, 0))
+    # Non-bonus specials hard-close at the first deadline (guard in case it
+    # passed while the user was typing).
+    if row not in BONUS_SPECIAL_ROWS and _deadline_passed():
         context.user_data.clear()
         await _say(update, f"⏰ مهلتِ این پیش‌بینی تموم شد ({_deadline_str()}). دیگه نمی‌شه ثبتش کرد. 🔒")
         return
-    # Champion fully locks once the knockout stage starts.
-    if row == CHAMPION_ROW and _champion_locked():
+    # Bonus specials fully lock once the knockout stage starts.
+    if row in BONUS_SPECIAL_ROWS and _champion_locked():
         context.user_data.clear()
-        await _say(update, f"⏰ مهلتِ تغییرِ قهرمان تموم شد ({_final_deadline_str()}). دیگه قفله. 🔒")
+        await _say(update, f"⏰ مهلتِ تغییرِ این پیش‌بینی تموم شد ({_final_deadline_str()}). دیگه قفله. 🔒")
         return
-    # Champion after the first deadline goes into the SECOND cell (a post-deadline
-    # change), which forfeits the +5 lock bonus.
-    after = row == CHAMPION_ROW and _deadline_passed()
+    # A bonus special changed after the first deadline goes into the SECOND cell
+    # (a post-deadline change), which forfeits the lock bonus.
+    after = row in BONUS_SPECIAL_ROWS and _deadline_passed()
     await _run(_sheet(context).set_special_prediction, a["col"], row, text, after)
     store.log_prediction({
         "type": "special", "uid": update.effective_user.id, "name": a["name"],
@@ -746,13 +754,13 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _say(
             update,
             f"✅ ثبت شد: {label}  →  *{_iso(text)}*\n"
-            "⚠️ چون بعد از ددلاین بود، اون ۵ امتیازِ بونوس بهت تعلق نمی‌گیره.",
+            f"⚠️ چون بعد از ددلاین بود، اون {bonus} امتیازِ بونوس بهت تعلق نمی‌گیره.",
         )
-    elif row == CHAMPION_ROW:
+    elif row in BONUS_SPECIAL_ROWS:
         await _say(
             update,
             f"✅ ثبت شد: {label}  →  *{_iso(text)}* 🏆\n"
-            "🔒 اگه تا ددلاین دیگه عوضش نکنی و درست باشه، ۵ امتیازِ اضافه می‌گیری! 🤑",
+            f"🔒 اگه تا ددلاین دیگه عوضش نکنی و درست باشه، {bonus} امتیازِ اضافه می‌گیری! 🤑",
         )
     else:
         await _say(
