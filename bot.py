@@ -214,7 +214,9 @@ def _main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
         rows.append([KeyboardButton(BTN_SEND_TABLE), KeyboardButton(BTN_SEND_PREDS)])
         rows.append([KeyboardButton(BTN_TOGGLE_AUTO), KeyboardButton(BTN_PREDLOG)])
         rows.append([KeyboardButton(BTN_SEND_GROUP), KeyboardButton(BTN_TOPGAINERS)])
-    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+    # is_persistent keeps the menu always shown (esp. on Telegram Desktop, where a
+    # non-persistent reply keyboard collapses and its toggle is easy to miss).
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, is_persistent=True)
 
 
 # ── The first-time guide ──────────────────────────────────────────────────
