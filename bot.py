@@ -616,45 +616,35 @@ async def special_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _edit(query, msg)
 
 
-async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    a = store.get_assignment(update.effective_user.id)
-    if not a:
-        await _say(update, _NOT_LINKED)
-        return
+_MYP_PAGE = 10  # matches shown per page
+
+
+async def _build_mypreds(context, a) -> dict:
+    """Read & render the user's predictions once, cache them on user_data, and
+    return {col, name, matches:[lines], specials:[lines]}. Pagination/back then
+    slice the cache without re-hitting the sheet."""
     sheet = _sheet(context)
     preds = await _run(sheet.user_predictions, a["col"])
-    pts = await _run(sheet.user_points, a["col"])  # points earned per row
+    pts = await _run(sheet.user_points, a["col"])
     matches = {m["row"]: m for m in await _run(sheet.matches)}
     specials = {s["row"]: s for s in await _run(sheet.specials)}
 
-    lines = [f"📋 *{a['name']}* جان، این‌ها پیش‌بینی‌های توئه 👇\n"]
-    if preds["matches"]:
-        for row in sorted(preds["matches"]):
-            m = matches.get(row)
-            if not m:
-                continue
-            h, aw = preds["matches"][row]
-            res = ""
-            if m["actual_home"] is not None:
-                actual = _score(m["actual_home"], m["actual_away"])
-                res = f"  (نتیجه‌ی واقعی: {actual})"
-            score = _score(h, aw)
-            pt = f"  🏅 {_fmt_total(pts[row])} امتیاز" if m["actual_home"] is not None and row in pts else ""
-            lines.append(f"⚽️ {_team(m['home'])} {score} {_team(m['away'])}{res}{pt}")
-    else:
-        lines.append("• هنوز هیچ بازی‌ای پیش‌بینی نکردی! 😴 برو پیش‌بینی کن تنبل‌خان 😏")
-    # Simple specials (not two-cell bonus rows) shown plainly.
+    mlines = []
+    for row in sorted(preds["matches"]):
+        m = matches.get(row)
+        if not m:
+            continue
+        h, aw = preds["matches"][row]
+        res = f"  (نتیجه‌ی واقعی: {_score(m['actual_home'], m['actual_away'])})" if m["actual_home"] is not None else ""
+        pt = f"  🏅 {_fmt_total(pts[row])} امتیاز" if m["actual_home"] is not None and row in pts else ""
+        mlines.append(f"⚽️ {_team(m['home'])} {_score(h, aw)} {_team(m['away'])}{res}{pt}")
+
+    slines = []
     simple_specials = {r: v for r, v in preds["specials"].items() if r not in BONUS_SPECIAL_ROWS}
-    header_added = False
-    if simple_specials:
-        lines.append("")
-        header_added = True
-        for row in sorted(simple_specials):
-            s = specials.get(row)
-            pt = f"  🏅 {_fmt_total(pts[row])} امتیاز" if s and not s["open"] and row in pts else ""
-            lines.append(f"🏆 {s['label'] if s else row}: {_iso(simple_specials[row])}{pt}")
-    # Two-cell bonus specials: effective pick (post-deadline change wins) + status.
-    # Both cells come from user_predictions (no extra reads).
+    for row in sorted(simple_specials):
+        s = specials.get(row)
+        pt = f"  🏅 {_fmt_total(pts[row])} امتیاز" if s and not s["open"] and row in pts else ""
+        slines.append(f"🏆 {s['label'] if s else row}: {_iso(simple_specials[row])}{pt}")
     for row in sorted(BONUS_SPECIAL_ROWS):
         locked = preds["specials"].get(row)
         live = preds.get("specials_live", {}).get(row)
@@ -671,11 +661,79 @@ async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             status = f"  💡 (تا ددلاین عوضش نکنی، {bonus} امتیاز بونوس می‌گیری)"
         pt = f"  🏅 {_fmt_total(pts[row])} امتیاز" if s and not s["open"] and row in pts else ""
-        if not header_added:
-            lines.append("")
-            header_added = True
-        lines.append(f"🏆 {label}: {_iso(eff)}{status}{pt}")
-    await _say(update, "\n".join(lines))
+        slines.append(f"🏆 {label}: {_iso(eff)}{status}{pt}")
+
+    data = {"col": a["col"], "name": a["name"], "matches": mlines, "specials": slines}
+    context.user_data["myp"] = data
+    return data
+
+
+def _mypreds_default_view(data) -> tuple:
+    """Default view: the last 10 matches + all specials, with a 'show all' button."""
+    mlines, slines = data["matches"], data["specials"]
+    out = [f"📋 *{data['name']}* جان، این‌ها پیش‌بینی‌های توئه 👇"]
+    if mlines:
+        shown = mlines[-_MYP_PAGE:]
+        if len(mlines) > _MYP_PAGE:
+            out.append(f"_آخرین {_fa_num(len(shown))} بازی (از کلِ {_fa_num(len(mlines))} بازی):_")
+        out.append("")
+        out += shown
+    else:
+        out.append("\n• هنوز هیچ بازی‌ای پیش‌بینی نکردی! 😴 برو پیش‌بینی کن تنبل‌خان 😏")
+    if slines:
+        out.append("")
+        out += slines
+    buttons = []
+    if len(mlines) > _MYP_PAGE:
+        buttons.append([InlineKeyboardButton("📄 نمایش همهٔ بازی‌ها", callback_data="myp:p:0")])
+    return "\n".join(out), (InlineKeyboardMarkup(buttons) if buttons else None)
+
+
+def _mypreds_page_view(data, page) -> tuple:
+    """All matches, paginated, with prev/next + a back button."""
+    mlines = data["matches"]
+    pages = max(1, (len(mlines) + _MYP_PAGE - 1) // _MYP_PAGE)
+    page = max(0, min(page, pages - 1))
+    start = page * _MYP_PAGE
+    out = [f"📋 *{data['name']}* جان — همهٔ بازی‌ها (صفحهٔ {_fa_num(page + 1)} از {_fa_num(pages)}) 👇", ""]
+    out += mlines[start:start + _MYP_PAGE]
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ قبلی", callback_data=f"myp:p:{page - 1}"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton("بعدی ▶️", callback_data=f"myp:p:{page + 1}"))
+    rows = [nav] if nav else []
+    rows.append([InlineKeyboardButton("🔙 بازگشت", callback_data="myp:back")])
+    return "\n".join(out), InlineKeyboardMarkup(rows)
+
+
+async def cmd_mypredictions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    a = store.get_assignment(update.effective_user.id)
+    if not a:
+        await _say(update, _NOT_LINKED)
+        return
+    data = await _build_mypreds(context, a)
+    text, kb = _mypreds_default_view(data)
+    await _say(update, text, reply_markup=kb)
+
+
+async def mypreds_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pagination + back for /mypredictions (slices the cached list)."""
+    query = update.callback_query
+    await query.answer()
+    a = store.get_assignment(update.effective_user.id)
+    if not a:
+        await _edit(query, _NOT_LINKED)
+        return
+    data = context.user_data.get("myp")
+    if not data or data.get("col") != a["col"]:
+        data = await _build_mypreds(context, a)
+    parts = query.data.split(":")
+    if parts[1] == "back":
+        text, kb = _mypreds_default_view(data)
+    else:
+        text, kb = _mypreds_page_view(data, int(parts[2]))
+    await _edit(query, text, reply_markup=kb)
 
 
 async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1531,4 +1589,5 @@ def register(app: Application):
     app.add_handler(CallbackQueryHandler(open_stepper, pattern=r"^pick:\d+$"))
     app.add_handler(CallbackQueryHandler(stepper_action, pattern=r"^sp:"))
     app.add_handler(CallbackQueryHandler(special_choice, pattern=r"^s:\d+$"))
+    app.add_handler(CallbackQueryHandler(mypreds_nav, pattern=r"^myp:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
