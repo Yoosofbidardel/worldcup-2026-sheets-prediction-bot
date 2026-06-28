@@ -1387,14 +1387,20 @@ async def cmd_topgainers(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _match_predictions_text(context, m) -> str:
     """The 'predictions are locked' message for one match, with team names so each
     score is unambiguous."""
-    preds = await _run(_sheet(context).match_all_predictions, m["row"])
+    preds = await _run(_sheet(context).match_all_predictions, m["row"], m.get("pen_row"))
     head = (
         f"⏰🔒 مهلتِ ارسالِ پیش‌بینیِ بازیِ *{_team(m['home'])}* 🆚 *{_team(m['away'])}* به پایان رسید!\n\n"
         "📋 پیش‌بینیِ همه:"
     )
     if preds:
         home_fa, away_fa = _team_fa(m["home"]), _team_fa(m["away"])
-        rows = [_pred_line(p["name"], home_fa, away_fa, p["home"], p["away"]) for p in preds]
+        rows = []
+        for p in preds:
+            line = _pred_line(p["name"], home_fa, away_fa, p["home"], p["away"])
+            if m.get("knockout") and p.get("pen") and p["home"] == p["away"]:
+                winner_fa = home_fa if p["pen"] == "home" else away_fa
+                line += f" — {_iso(winner_fa)} تو پنالتی"
+            rows.append(line)
     else:
         rows = ["• هیچکس برای این بازی پیش‌بینی نکرده بود! 😅"]
     return head + "\n" + "\n".join(rows)

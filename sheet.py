@@ -304,20 +304,25 @@ class SheetClient:
                     out[c].add(r)
         return out
 
-    def match_all_predictions(self, row: int) -> list[dict]:
+    def match_all_predictions(self, row: int, pen_row: int | None = None) -> list[dict]:
         """Every participant's prediction for one match row: [{name, home, away}]
-        for slots that filled both cells. Reads the whole row in one call."""
+        for slots that filled both cells. For a knockout match, pass pen_row to
+        also include each player's penalty pick as 'pen' ('home'/'away')."""
         slots = self.slots()
         if not slots:
             return []
         last_col = max(s["col"] + 1 for s in slots)
         last_letter = rowcol_to_a1(1, last_col)[:-1]
+        ranges = [f"A{row}:{last_letter}{row}"]
+        if pen_row:
+            ranges.append(f"A{pen_row}:{last_letter}{pen_row}")
         with self._lock:
-            got = self._ws.get(f"A{row}:{last_letter}{row}", value_render_option="UNFORMATTED_VALUE")
-        rowvals = got[0] if got else []
+            got = self._ws.batch_get(ranges, value_render_option="UNFORMATTED_VALUE")
+        rowvals = got[0][0] if got and got[0] else []
+        penvals = got[1][0] if pen_row and len(got) > 1 and got[1] else []
 
-        def cell(c):
-            return rowvals[c - 1] if c - 1 < len(rowvals) else None
+        def cell(block, c):
+            return block[c - 1] if c - 1 < len(block) else None
 
         def as_int(v):
             try:
@@ -327,9 +332,18 @@ class SheetClient:
 
         out = []
         for s in slots:
-            h, a = cell(s["col"]), cell(s["col"] + 1)
-            if not _blank(h) and not _blank(a):
-                out.append({"name": s["name"], "home": as_int(h), "away": as_int(a)})
+            h, a = cell(rowvals, s["col"]), cell(rowvals, s["col"] + 1)
+            if _blank(h) or _blank(a):
+                continue
+            entry = {"name": s["name"], "home": as_int(h), "away": as_int(a)}
+            if pen_row:
+                ph, pa = cell(penvals, s["col"]), cell(penvals, s["col"] + 1)
+                if not _blank(ph) and not _blank(pa):
+                    try:
+                        entry["pen"] = "home" if float(ph) > float(pa) else "away"
+                    except (TypeError, ValueError):
+                        pass
+            out.append(entry)
         return out
 
     def user_points(self, base_col: int) -> dict:
