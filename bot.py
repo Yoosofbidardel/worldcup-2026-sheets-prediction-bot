@@ -572,12 +572,57 @@ async def stepper_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "type": "match", "uid": update.effective_user.id, "name": a["name"],
         "row": row, "home": home_name, "away": away_name, "ph": home, "pa": away,
     })
+    # knockout draw → بپرس کی تو پنالتی صعود می‌کنه
+    if match.get("knockout") and home == away:
+        pen_row = match["pen_row"]
+        await query.answer("نتیجه ثبت شد ✅")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"🏆 {_team(home_name)}", callback_data=f"pen:{pen_row}:h")],
+            [InlineKeyboardButton(f"🏆 {_team(away_name)}", callback_data=f"pen:{pen_row}:a")],
+        ])
+        await _edit(
+            query,
+            f"✅ ثبت شد: {_team(home_name)} *{_score(home, away)}* {_team(away_name)}\n\n"
+            "⚖️ مساوی زدی! کدوم تیم تو پنالتی صعود می‌کنه جونم؟ 👇",
+            reply_markup=kb,
+        )
+        return
+    if match.get("knockout"):
+        await _run(sheet.set_penalty_prediction, a["col"], match["pen_row"], None)
     await query.answer("ثبت شد ✅🔥")
     await _edit(
         query,
         f"✅ ثبت شد: {_team(home_name)} *{_score(home, away)}* {_team(away_name)} 🎯\n"
         "ایشالا که درست از آب در بیاد! 🤞",
     )
+
+
+async def penalty_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """knockout draw: ذخیرهٔ تیمی که از نظر بازیکن تو پنالتی صعود می‌کنه."""
+    query = update.callback_query
+    _, pen_row, side = query.data.split(":")
+    pen_row = int(pen_row)
+    a = store.get_assignment(update.effective_user.id)
+    if not a:
+        await query.answer()
+        await _edit(query, _NOT_LINKED)
+        return
+    sheet = _sheet(context)
+    score_row = pen_row - 1
+    match = next((m for m in await _run(sheet.matches) if m["row"] == score_row), None)
+    if not match or not match["open"]:
+        await query.answer()
+        await _edit(query, "⏰ این بازی همین الان بستِس — پنالتی ثبت نشد. 😬")
+        return
+    home_adv = side == "h"
+    await _run(sheet.set_penalty_prediction, a["col"], pen_row, home_adv)
+    winner = match["home"] if home_adv else match["away"]
+    store.log_prediction({
+        "type": "penalty", "uid": update.effective_user.id, "name": a["name"],
+        "row": score_row, "winner": winner,
+    })
+    await query.answer("پنالتی ثبت شد ✅")
+    await _edit(query, f"✅ ثبت شد: *{_team(winner)}* تو پنالتی صعود می‌کنه. 🎯\nموفق باشی جونم! 🤞")
 
 
 async def special_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -630,6 +675,7 @@ async def _build_mypreds(context, a) -> dict:
     specials = {s["row"]: s for s in await _run(sheet.specials)}
 
     mlines = []
+    pens = preds.get("penalties", {})
     for row in sorted(preds["matches"]):
         m = matches.get(row)
         if not m:
@@ -637,7 +683,11 @@ async def _build_mypreds(context, a) -> dict:
         h, aw = preds["matches"][row]
         res = f"  (نتیجه‌ش شد: {_score(m['actual_home'], m['actual_away'])})" if m["actual_home"] is not None else ""
         pt = f"  🏅 {_fmt_total(pts[row])} امتیاز" if m["actual_home"] is not None and row in pts else ""
-        mlines.append(f"⚽️ {_team(m['home'])} {_score(h, aw)} {_team(m['away'])}{res}{pt}")
+        pen = ""
+        if m.get("knockout") and row in pens:
+            winner = m["home"] if pens[row] == "home" else m["away"]
+            pen = f" — {_team(winner)} تو پنالتی"
+        mlines.append(f"⚽️ {_team(m['home'])} {_score(h, aw)} {_team(m['away'])}{pen}{res}{pt}")
 
     slines = []
     simple_specials = {r: v for r, v in preds["specials"].items() if r not in BONUS_SPECIAL_ROWS}
@@ -1586,6 +1636,7 @@ def register(app: Application):
     app.add_handler(CallbackQueryHandler(predict_page, pattern=r"^ppage:\d+$"))
     app.add_handler(CallbackQueryHandler(open_stepper, pattern=r"^pick:\d+$"))
     app.add_handler(CallbackQueryHandler(stepper_action, pattern=r"^sp:"))
+    app.add_handler(CallbackQueryHandler(penalty_choice, pattern=r"^pen:\d+:[ha]$"))
     app.add_handler(CallbackQueryHandler(special_choice, pattern=r"^s:\d+$"))
     app.add_handler(CallbackQueryHandler(mypreds_nav, pattern=r"^myp:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
