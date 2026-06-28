@@ -53,6 +53,14 @@ SLOT_STRIDE = 3
 MATCH_FIRST_ROW = 3
 MATCH_LAST_ROW = int(os.getenv("MATCH_LAST_ROW", "69"))
 
+# Knockout fixtures live in PAIRED rows from KNOCKOUT_FIRST_ROW: the odd "score"
+# row holds the regulation result + each player's score prediction; the following
+# (even) row holds the penalty/advancer (1-0 = home goes through, 0-1 = away).
+# Only the score rows are real matches. Predicting a draw triggers a penalty
+# sub-prediction written to the next row. 0 disables knockout in the bot.
+KNOCKOUT_FIRST_ROW = int(os.getenv("KNOCKOUT_FIRST_ROW", "75"))
+KNOCKOUT_LAST_ROW = int(os.getenv("KNOCKOUT_LAST_ROW", "138"))
+
 # Column that stores each match's kickoff time (ISO-8601 UTC). It MUST sit past
 # every prediction block (and the ROBOT block), otherwise it collides with a
 # player's column. Default 74 (col BV) suits ~20 players; override per-deployment

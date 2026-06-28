@@ -44,6 +44,8 @@ from config import (
     CHAMPION_ROW,
     EXCLUDED_NAMES,
     FIRST_SLOT_COL,
+    KNOCKOUT_FIRST_ROW,
+    KNOCKOUT_LAST_ROW,
     GOOGLE_CREDENTIALS_FILE,
     GOOGLE_SHEET_ID,
     KICKOFF_COL,
@@ -136,38 +138,52 @@ class SheetClient:
         a score is entered).
         """
         kcol = rowcol_to_a1(1, KICKOFF_COL)[:-1]  # column letter
+        last = max(MATCH_LAST_ROW, KNOCKOUT_LAST_ROW or 0)
         ranges = [
-            f"A{MATCH_FIRST_ROW}:D{MATCH_LAST_ROW}",
-            f"{kcol}{MATCH_FIRST_ROW}:{kcol}{MATCH_LAST_ROW}",
+            f"A{MATCH_FIRST_ROW}:D{last}",
+            f"{kcol}{MATCH_FIRST_ROW}:{kcol}{last}",
         ]
         with self._lock:
             rows, kicks = self._ws.batch_get(ranges, value_render_option="UNFORMATTED_VALUE")
         now = datetime.now(timezone.utc)
-        out = []
-        for i, row in enumerate(rows):
-            r = MATCH_FIRST_ROW + i
+
+        def build(r, knockout):
+            i = r - MATCH_FIRST_ROW
+            row = rows[i] if 0 <= i < len(rows) else []
             home = row[0] if len(row) > 0 else ""
             away = row[1] if len(row) > 1 else ""
             if _blank(home) or _blank(away):
-                continue
+                return None
             ah = row[2] if len(row) > 2 else ""
             aa = row[3] if len(row) > 3 else ""
             has_result = not _blank(ah) and not _blank(aa)
-            kraw = kicks[i][0] if i < len(kicks) and kicks[i] else None
+            kraw = kicks[i][0] if 0 <= i < len(kicks) and kicks[i] else None
             kickoff = _parse_kickoff(kraw)
             started = kickoff is not None and now >= kickoff
-            out.append(
-                {
-                    "row": r,
-                    "home": str(home).strip(),
-                    "away": str(away).strip(),
-                    "actual_home": ah if has_result else None,
-                    "actual_away": aa if has_result else None,
-                    "kickoff": kickoff,
-                    "started": started,
-                    "open": True if PREDICTIONS_ALWAYS_OPEN else (not has_result and not started),
-                }
-            )
+            return {
+                "row": r,
+                "home": str(home).strip(),
+                "away": str(away).strip(),
+                "actual_home": ah if has_result else None,
+                "actual_away": aa if has_result else None,
+                "kickoff": kickoff,
+                "started": started,
+                "open": True if PREDICTIONS_ALWAYS_OPEN else (not has_result and not started),
+                "knockout": knockout,
+                "pen_row": (r + 1) if knockout else None,
+            }
+
+        out = []
+        for r in range(MATCH_FIRST_ROW, MATCH_LAST_ROW + 1):
+            m = build(r, False)
+            if m:
+                out.append(m)
+        # Knockout: only the odd "score" rows are matches (the next row is penalties).
+        if KNOCKOUT_FIRST_ROW:
+            for r in range(KNOCKOUT_FIRST_ROW, KNOCKOUT_LAST_ROW + 1, 2):
+                m = build(r, True)
+                if m:
+                    out.append(m)
         return out
 
     def open_matches(self) -> list[dict]:
@@ -201,7 +217,7 @@ class SheetClient:
         """Return {'matches': {row: (home, away)}, 'specials': {row: text}}."""
         home_letter = rowcol_to_a1(1, base_col)[:-1]
         away_letter = rowcol_to_a1(1, base_col + 1)[:-1]
-        last = max(MATCH_LAST_ROW, max(SPECIAL_ROWS))
+        last = max(MATCH_LAST_ROW, KNOCKOUT_LAST_ROW or 0, max(SPECIAL_ROWS))
         ranges = [
             f"{home_letter}{MATCH_FIRST_ROW}:{home_letter}{last}",
             f"{away_letter}{MATCH_FIRST_ROW}:{away_letter}{last}",
@@ -216,14 +232,22 @@ class SheetClient:
             return None
 
         # 'specials' = locked/1st-cell pick (home col); 'specials_live' = 2nd-cell
-        # post-deadline pick (away col). Both come from the same two reads above,
-        # so /mypredictions needs no extra per-row calls.
-        result = {"matches": {}, "specials": {}, "specials_live": {}}
-        for m in self.matches():
+        # post-deadline pick (away col). 'penalties' = a knockout draw's advancer
+        # pick ('home'/'away'). All come from the same two reads (no extra calls).
+        result = {"matches": {}, "specials": {}, "specials_live": {}, "penalties": {}}
+        ms = self.matches()
+        for m in ms:
             r = m["row"]
             h, a = col_val(homes, r), col_val(aways, r)
             if not _blank(h) and not _blank(a):
                 result["matches"][r] = (h, a)
+            if m.get("knockout"):
+                ph, pa = col_val(homes, m["pen_row"]), col_val(aways, m["pen_row"])
+                if not _blank(ph) and not _blank(pa):
+                    try:
+                        result["penalties"][r] = "home" if float(ph) > float(pa) else "away"
+                    except (TypeError, ValueError):
+                        pass
         for row in SPECIAL_ROWS:
             v = col_val(homes, row)
             if not _blank(v):
@@ -264,9 +288,10 @@ class SheetClient:
             return {}
         last_col = max(cols) + 1
         last_letter = rowcol_to_a1(1, last_col)[:-1]
+        last_row = max(MATCH_LAST_ROW, KNOCKOUT_LAST_ROW or 0)
         with self._lock:
             grid = self._ws.get(
-                f"A{MATCH_FIRST_ROW}:{last_letter}{MATCH_LAST_ROW}",
+                f"A{MATCH_FIRST_ROW}:{last_letter}{last_row}",
                 value_render_option="UNFORMATTED_VALUE",
             )
         out = {c: set() for c in cols}
@@ -351,6 +376,36 @@ class SheetClient:
         with self._lock:
             self._ws.update_acell(rowcol_to_a1(row, base_col), home)
             self._ws.update_acell(rowcol_to_a1(row, base_col + 1), away)
+
+    def set_penalty_prediction(self, base_col: int, pen_row: int, home_advances):
+        """A knockout draw's penalty/advancer pick: 1-0 = home goes through,
+        0-1 = away. None clears it back to a space (no pick)."""
+        if home_advances is None:
+            h, a = " ", " "
+        else:
+            h, a = (1, 0) if home_advances else (0, 1)
+        with self._lock:
+            self._ws.update(
+                f"{rowcol_to_a1(pen_row, base_col)}:{rowcol_to_a1(pen_row, base_col + 1)}",
+                [[h, a]], value_input_option="USER_ENTERED",
+            )
+
+    def penalty_pick(self, base_col: int, pen_row: int):
+        """Read a participant's penalty pick: 'home', 'away', or None."""
+        with self._lock:
+            vals = self._ws.get(
+                f"{rowcol_to_a1(pen_row, base_col)}:{rowcol_to_a1(pen_row, base_col + 1)}",
+                value_render_option="UNFORMATTED_VALUE",
+            )
+        row = vals[0] if vals else []
+        h = row[0] if len(row) > 0 else None
+        a = row[1] if len(row) > 1 else None
+        if _blank(h) or _blank(a):
+            return None
+        try:
+            return "home" if float(h) > float(a) else "away"
+        except (TypeError, ValueError):
+            return None
 
     def set_special_prediction(self, base_col: int, row: int, text: str, cell2: bool = False):
         """Write a special prediction. cell2=True writes the participant's SECOND
