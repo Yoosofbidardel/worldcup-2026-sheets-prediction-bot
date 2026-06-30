@@ -135,6 +135,37 @@ try:
 except ValueError:
     CHAMPION_FINAL_DEADLINE_DT = None
 
+# Extra one-off special predictions (e.g. a MAKA-only challenge), env-driven so
+# they only exist where configured. Each entry: row|label|points|deadline_iso,
+# multiple separated by ';'. A simple text special that hard-closes at its OWN
+# deadline (kept in SPECIAL_DEADLINE_OVERRIDES). The points are display-only —
+# the sheet formula does the scoring. Example:
+#   EXTRA_SPECIALS="146|بولدترین پیش‌بینی|5.75|2026-06-30T21:45:00+00:00"
+SPECIAL_DEADLINE_OVERRIDES = {}  # row -> datetime (a special's own deadline)
+def _parse_extra_specials(s: str):
+    for part in s.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        f = part.split("|")
+        if len(f) < 3:
+            continue
+        try:
+            row, label, pts = int(f[0]), f[1].strip(), float(f[2])
+        except ValueError:
+            continue
+        SPECIAL_ROWS[row] = (label, pts)
+        if len(f) >= 4 and f[3].strip():
+            try:
+                dt = datetime.fromisoformat(f[3].strip())
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                SPECIAL_DEADLINE_OVERRIDES[row] = dt
+            except ValueError:
+                pass
+
+_parse_extra_specials(os.getenv("EXTRA_SPECIALS", ""))
+
 # Local file mapping telegram users -> sheet slots.
 ASSIGNMENTS_FILE = os.path.join(os.path.dirname(__file__), "assignments.json")
 

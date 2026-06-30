@@ -49,6 +49,7 @@ from config import (
     REMINDER_WINDOWS_HOURS,
     SPECIAL_BONUS,
     SPECIAL_DEADLINE_DT,
+    SPECIAL_DEADLINE_OVERRIDES,
     TOP_GAINERS_COUNT,
     TOPSCORER_ROW,
 )
@@ -154,14 +155,30 @@ def _final_deadline_str() -> str:
     return _fmt_kickoff(CHAMPION_FINAL_DEADLINE_DT) if CHAMPION_FINAL_DEADLINE_DT else ""
 
 
+def _special_open_by_time(row: int) -> bool:
+    """Is the special at `row` still within its deadline? A row with its own
+    override deadline uses that; two-cell bonus rows stay open until the knockout
+    stage; everything else hard-closes at the first (round-3) deadline."""
+    if row in SPECIAL_DEADLINE_OVERRIDES:
+        return datetime.now(timezone.utc) < SPECIAL_DEADLINE_OVERRIDES[row]
+    if row in BONUS_SPECIAL_ROWS:
+        return not _champion_locked()
+    return not _deadline_passed()
+
+
+def _special_deadline_str(row: int) -> str:
+    """Display string for the deadline that applies to this special row."""
+    if row in SPECIAL_DEADLINE_OVERRIDES:
+        return _fmt_kickoff(SPECIAL_DEADLINE_OVERRIDES[row])
+    if row in BONUS_SPECIAL_ROWS:
+        return _final_deadline_str()
+    return _deadline_str()
+
+
 def _special_is_open(s: dict) -> bool:
-    """Whether a special prediction can currently be set/changed. Two-cell bonus
-    rows (champion always; Katan also best-player & top-scorer) stay editable
-    until the knockout stage starts — a change after the first deadline just
-    forfeits the bonus. Any other special hard-closes at the first deadline."""
-    if s["row"] in BONUS_SPECIAL_ROWS:
-        return s["open"] and not _champion_locked()
-    return s["open"] and not _deadline_passed()
+    """Whether a special prediction can currently be set/changed (answer not yet
+    known AND within its deadline)."""
+    return s["open"] and _special_open_by_time(s["row"])
 
 
 _MEDALS = {0: "🥇", 1: "🥈", 2: "🥉"}
@@ -491,10 +508,10 @@ async def cmd_special(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(f"{s['label']} ({_fa_num(s['points'])} امتیاز)", callback_data=f"s:{s['row']}")]
         for s in opens
     ]
-    note = ""
-    if SPECIAL_DEADLINE_DT:
-        note = f"\n\n⏰ مهلتِ پیش‌بینیِ ویژه تا *شروعِ دور سومِ گروهی*: {_deadline_str()}"
-    await _say(update, "🏆 یه پیش‌بینی ویژه انتخاب کن:" + note, reply_markup=InlineKeyboardMarkup(buttons))
+    lines = ["🏆 یه پیش‌بینی ویژه انتخاب کن:\n"]
+    for s in opens:
+        lines.append(f"• *{s['label']}* — ⏰ مهلت تا {_special_deadline_str(s['row'])}")
+    await _say(update, "\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
 
 
 async def open_stepper(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -639,8 +656,7 @@ async def special_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _edit(query, "🔒 این پیش‌بینی پیدا نشد.")
         return
     if not _special_is_open(special):
-        when = _final_deadline_str() if row in BONUS_SPECIAL_ROWS else _deadline_str()
-        await _edit(query, f"⏰ مهلتِ این پیش‌بینی تموم شده ({when}). دیگه نمی‌شه ثبتش کرد. 🔒")
+        await _edit(query, f"⏰ مهلتِ این پیش‌بینی تموم شده ({_special_deadline_str(row)}). دیگه نمی‌شه ثبتش کرد. 🔒")
         return
     context.user_data["await"] = ("special", row)
     context.user_data["label"] = special["label"]
@@ -875,16 +891,10 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     label = context.user_data.get("label", "")
     bonus = _fa_num(SPECIAL_BONUS.get(row, 0))
-    # Non-bonus specials hard-close at the first deadline (guard in case it
-    # passed while the user was typing).
-    if row not in BONUS_SPECIAL_ROWS and _deadline_passed():
+    # Guard the row's own deadline (in case it passed while the user was typing).
+    if not _special_open_by_time(row):
         context.user_data.clear()
-        await _say(update, f"⏰ مهلتِ این پیش‌بینی تموم شد ({_deadline_str()}). دیگه نمی‌شه ثبتش کرد. 🔒")
-        return
-    # Bonus specials fully lock once the knockout stage starts.
-    if row in BONUS_SPECIAL_ROWS and _champion_locked():
-        context.user_data.clear()
-        await _say(update, f"⏰ مهلتِ تغییرِ این پیش‌بینی تموم شد ({_final_deadline_str()}). دیگه قفله. 🔒")
+        await _say(update, f"⏰ مهلتِ این پیش‌بینی تموم شد ({_special_deadline_str(row)}). دیگه نمی‌شه ثبتش کرد. 🔒")
         return
     # A bonus special changed after the first deadline goes into the SECOND cell
     # (a post-deadline change), which forfeits the lock bonus.
