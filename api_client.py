@@ -81,8 +81,10 @@ def fetch_kickoffs() -> dict:
 
 
 def fetch_results() -> dict:
-    """Return {(canon_home, canon_away): (home_goals, away_goals)} for matches
-    the API marks FINISHED. Used to auto-fill results in the sheet after a game.
+    """Return {(canon_home, canon_away): {'home', 'away', 'pen'}} for FINISHED
+    matches. For a penalty shootout, 'home'/'away' are the DRAW score (regulation
+    + extra time, e.g. 1-1) and 'pen' is the team that went through ('home' or
+    'away'); otherwise 'pen' is None and 'home'/'away' are the full-time score.
 
     Returns {} on any error (the caller then leaves the sheet untouched).
     """
@@ -104,11 +106,38 @@ def fetch_results() -> dict:
                 continue
             home = m["homeTeam"]["name"]
             away = m["awayTeam"]["name"]
-            ft = m["score"]["fullTime"]
-            h, a = ft["home"], ft["away"]
+            sc = m.get("score") or {}
+            ft = sc.get("fullTime") or {}
+            pen = None
+            if sc.get("duration") == "PENALTY_SHOOTOUT":
+                # the score row should hold the DRAW (regulation + extra time),
+                # NOT the shootout aggregate.
+                reg = sc.get("regularTime") or {}
+                et = sc.get("extraTime") or {}
+                h = (reg.get("home") or 0) + (et.get("home") or 0)
+                a = (reg.get("away") or 0) + (et.get("away") or 0)
+                pen = _shootout_winner(sc)
+            else:
+                h, a = ft.get("home"), ft.get("away")
         except (KeyError, TypeError):
             continue
         if home and away and h is not None and a is not None:
-            out[(canon(home), canon(away))] = (h, a)
+            out[(canon(home), canon(away))] = {"home": h, "away": a, "pen": pen}
     logger.info("Fetched %d finished results from the API.", len(out))
     return out
+
+
+def _shootout_winner(score: dict):
+    """Which side advanced on penalties: 'home', 'away', or None (undeterminable).
+    Tries winner, then the penalties tally, then the full-time aggregate."""
+    w = score.get("winner")
+    if w == "HOME_TEAM":
+        return "home"
+    if w == "AWAY_TEAM":
+        return "away"
+    for key in ("penalties", "fullTime"):
+        block = score.get(key) or {}
+        h, a = block.get("home"), block.get("away")
+        if h is not None and a is not None and h != a:
+            return "home" if h > a else "away"
+    return None

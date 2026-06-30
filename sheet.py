@@ -160,6 +160,17 @@ class SheetClient:
             kraw = kicks[i][0] if 0 <= i < len(kicks) and kicks[i] else None
             kickoff = _parse_kickoff(kraw)
             started = kickoff is not None and now >= kickoff
+            # knockout: who actually advanced (from the penalty row's C/D), if set
+            pen_actual = None
+            if knockout:
+                prow = rows[i + 1] if 0 <= i + 1 < len(rows) else []
+                pc = prow[2] if len(prow) > 2 else ""
+                pd = prow[3] if len(prow) > 3 else ""
+                if not _blank(pc) and not _blank(pd):
+                    try:
+                        pen_actual = "home" if float(pc) > float(pd) else "away"
+                    except (TypeError, ValueError):
+                        pass
             return {
                 "row": r,
                 "home": str(home).strip(),
@@ -171,6 +182,7 @@ class SheetClient:
                 "open": True if PREDICTIONS_ALWAYS_OPEN else (not has_result and not started),
                 "knockout": knockout,
                 "pen_row": (r + 1) if knockout else None,
+                "pen_actual": pen_actual,
             }
 
         out = []
@@ -503,24 +515,32 @@ class SheetClient:
     # ── Results (auto-filled from the API after a match finishes) ────────
     def sync_results(self, results_map: dict) -> dict:
         """Write finished-match results into columns C/D from
-        {(canon_home, canon_away): (home_goals, away_goals)}.
+        {(canon_home, canon_away): {'home','away','pen'}}.
 
-        Only fills rows whose result is still EMPTY, so a manual entry or
-        correction in the sheet is never overwritten. Returns a small report.
+        For a knockout match decided on penalties, the DRAW score goes in the
+        score row and the advancer (1-0 home / 0-1 away) in the penalty row.
+        Only fills cells that are still EMPTY, so a manual correction is never
+        overwritten. Returns a small report.
         """
         written, scored = 0, []
         for m in self.matches():
-            if m["actual_home"] is not None:
-                continue  # already has a result — leave it alone
-            sc = results_map.get((canon(m["home"]), canon(m["away"])))
-            if not sc:
+            r = results_map.get((canon(m["home"]), canon(m["away"])))
+            if not r:
                 continue
-            home_goals, away_goals = sc
-            with self._lock:
-                self._ws.update_acell(f"C{m['row']}", home_goals)
-                self._ws.update_acell(f"D{m['row']}", away_goals)
-            written += 1
-            scored.append(f"{m['home']} {home_goals}-{away_goals} {m['away']}")
+            if m["actual_home"] is None:
+                with self._lock:
+                    self._ws.update_acell(f"C{m['row']}", r["home"])
+                    self._ws.update_acell(f"D{m['row']}", r["away"])
+                written += 1
+                scored.append(f"{m['home']} {r['home']}-{r['away']} {m['away']}")
+            # knockout penalty: record who went through, if not set yet
+            if m.get("knockout") and r.get("pen") and not m.get("pen_actual"):
+                ph, pa = (1, 0) if r["pen"] == "home" else (0, 1)
+                with self._lock:
+                    self._ws.update_acell(f"C{m['pen_row']}", ph)
+                    self._ws.update_acell(f"D{m['pen_row']}", pa)
+                winner = m["home"] if r["pen"] == "home" else m["away"]
+                scored.append(f"  ↳ {winner} (پنالتی)")
         return {"written": written, "scored": scored}
 
     # ── Leaderboard / standings (totals are computed live by the sheet) ──
