@@ -76,9 +76,9 @@ EXCLUDED_NAMES = {"ROBOT", "Kickoff (UTC)"}
 # SPECIAL_BASE_ROW is env-configurable (these rows shift down if group rows grow).
 SPECIAL_BASE_ROW = int(os.getenv("SPECIAL_BASE_ROW", "70"))
 SPECIAL_ROWS = {
-    SPECIAL_BASE_ROW: ("قهرمان جام جهانی", 7),
-    SPECIAL_BASE_ROW + 1: ("بهترین بازیکن تورنمنت", 6),
-    SPECIAL_BASE_ROW + 2: ("آقای گل", 6),
+    SPECIAL_BASE_ROW: ("Champion", 7),
+    SPECIAL_BASE_ROW + 1: ("Best player", 6),
+    SPECIAL_BASE_ROW + 2: ("Top scorer", 6),
 }
 # Named rows for the deadline logic below.
 CHAMPION_ROW = SPECIAL_BASE_ROW          # has the +5 early-lock bonus + a 2nd cell
@@ -140,7 +140,7 @@ except ValueError:
 # multiple separated by ';'. A simple text special that hard-closes at its OWN
 # deadline (kept in SPECIAL_DEADLINE_OVERRIDES). The points are display-only —
 # the sheet formula does the scoring. Example:
-#   EXTRA_SPECIALS="146|بولدترین پیش‌بینی|5.75|2026-06-30T21:45:00+00:00"
+#   EXTRA_SPECIALS="146|Boldest predictions|5.75|2026-06-30T21:45:00+00:00"
 SPECIAL_DEADLINE_OVERRIDES = {}  # row -> datetime (a special's own deadline)
 def _parse_extra_specials(s: str):
     for part in s.split(";"):

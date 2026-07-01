@@ -3,7 +3,7 @@
 Runs against the local .xlsx with openpyxl (no Google credentials needed) so you
 can confirm the slot/match math before connecting the live bot.
 
-    python3 verify_layout.py "../مکا worldcup 2026.xlsx"
+    python3 verify_layout.py "../wc-2026.xlsx"
 """
 import sys
 
@@ -68,5 +68,5 @@ def main(path):
 
 
 if __name__ == "__main__":
-    path = sys.argv[1] if len(sys.argv) > 1 else "../مکا worldcup 2026.xlsx"
+    path = sys.argv[1] if len(sys.argv) > 1 else "../wc-2026.xlsx"
     main(path)

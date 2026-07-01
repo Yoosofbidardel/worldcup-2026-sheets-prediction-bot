@@ -540,7 +540,7 @@ class SheetClient:
                     self._ws.update_acell(f"C{m['pen_row']}", ph)
                     self._ws.update_acell(f"D{m['pen_row']}", pa)
                 winner = m["home"] if r["pen"] == "home" else m["away"]
-                scored.append(f"  ↳ {winner} (پنالتی)")
+                scored.append(f"  ↳ {winner} (penalties)")
         return {"written": written, "scored": scored}
 
     # ── Leaderboard / standings (totals are computed live by the sheet) ──
