@@ -1,144 +1,189 @@
-# World Cup 2026 Prediction Bot (Google Sheets edition)
+# World Cup 2026 Prediction Bot ⚽️🏆
 
-A Telegram bot that writes each player's predictions straight into your shared
-Google Sheet. **All scoring stays in the sheet** — the bot only fills the two
-prediction cells of each player's column block; the existing `IF(...)` formulas
-calculate points and totals live.
+A Telegram bot that runs a **score-prediction game** for a group of friends over
+the whole World Cup. Players predict match scores from friendly tap-buttons in
+Telegram; the bot writes **only the two prediction cells** into a shared Google
+Sheet, and **every point is computed by the sheet's own formulas**. The bot never
+writes a score — so the scoring logic is fully transparent, lives in one place,
+and recalculates live for everyone.
 
-## How it maps to your sheet
+The same codebase runs **two independent leagues** at once (two Telegram bots,
+two Google Sheets) that differ only by their `.env` — same code, different data.
 
-The workbook `مکا worldcup 2026.xlsx` has, on the `AFC Asian Cup Qatar 2022` tab:
+---
 
-| Sheet area | Meaning |
+## Why it's built this way
+
+- **The Google Sheet is the source of truth and the scoring engine.** The bot is
+  a thin, stateless front-end: it maps a Telegram user to a sheet column and
+  writes their prediction. All totals, tie-breaks, bonuses and knockout rules are
+  `=IF(...)` formulas in the sheet. Anyone can open the sheet and audit exactly
+  how a score was produced.
+- **Tap, don't type.** Everything is done with buttons — a persistent bottom
+  menu plus inline keyboards (a ±/Save score stepper, paginated match lists,
+  penalty-winner buttons). Users never have to remember a command.
+- **Config-driven, single codebase.** Sheet layout (row ranges, columns,
+  deadlines, bonus rows) is read from environment variables, so one code path
+  serves differently-shaped sheets.
+
+---
+
+## How scoring works (all in the sheet)
+
+Each match row stores the two teams (cols `A`/`B`) and the actual result
+(cols `C`/`D`). Each participant owns a 3-column block: `[predicted_home,
+predicted_away, points]`. The **points** cell is a formula comparing the player's
+prediction to the actual result. Row 2 holds each player's `=SUM(...)` total,
+which drives the leaderboard.
+
+### Group stage (per match)
+
+| Outcome | Points |
 |---|---|
-| Row 1, from col **E**, every 3 cols | Player names (20 players + a `ROBOT` column the bot ignores) |
-| Row 2 | `=SUM(...)` total for each player |
-| Rows 3–69, cols **A/B** | Home / away team |
-| Rows 3–69, cols **C/D** | Actual result (admin fills these) |
-| Each player = 3 cols | `[predicted_home, predicted_away, points_formula]` |
-| Rows 70–72 | Special predictions: Champion (7 pts), Man of the Cup (6), Top Scorer (6) |
+| Exact score | **10** |
+| Correct draw, close (within 1 goal of the real draw) | 7.5 |
+| Correct draw, further off | 5.5 |
+| Correct winner | 7.5 minus a goal-difference-error penalty |
+| One team's goals correct | 1 |
+| Otherwise | 0 |
 
-A match is **open for predictions until its actual result (C/D) is entered**.
-Run `python3 verify_layout.py "../مکا worldcup 2026.xlsx"` any time to print how
-the bot reads the file — no credentials needed.
+A cell counts as "empty" (→ 0) only when it contains a literal space `" "`, not
+when it is truly blank — a deliberate convention the formulas rely on.
 
-## One-time setup
+### Knockout stage (paired rows + penalties)
 
-### 1. Put the workbook on Google Sheets
-Upload `مکا worldcup 2026.xlsx` to Google Drive and **Open with → Google Sheets**
-(or File → Import). Formulas are preserved and recalculate live. Copy the sheet
-ID from the URL: `https://docs.google.com/spreadsheets/d/`**`<SHEET_ID>`**`/edit`.
+Every knockout match uses **two rows**: the *score row* (regulation result) and a
+*penalty row* below it that encodes who advanced (`1-0` = home, `0-1` = away).
+Predicting a **draw** in the bot triggers a follow-up: two buttons asking which
+team you think goes through on penalties.
 
-### 2. Create a Google service account (free)
-1. Go to <https://console.cloud.google.com/> → create/select a project.
-2. **APIs & Services → Library** → enable **Google Sheets API** and **Google Drive API**.
-3. **APIs & Services → Credentials → Create credentials → Service account.**
-4. Open the new service account → **Keys → Add key → JSON**. Save the file as
-   `service_account.json` in this folder.
-5. Copy the service account's email (looks like `...@...iam.gserviceaccount.com`)
-   and **Share** your Google Sheet with that email as **Editor**.
+Scoring (before the per-round multiplier):
 
-### 3. Create the Telegram bot (free)
-1. In Telegram, open **@BotFather** (blue verified check) and tap **Start**.
-2. Send `/newbot`, give it a **name** (e.g. *World Cup Predictions*), then a unique
-   **username** ending in `bot` (e.g. `wc2026_predictions_bot`).
-3. BotFather replies with a token like `123456789:AAExample-FakeToken...` — that's
-   your `TELEGRAM_BOT_TOKEN`. Keep it secret (use `/revoke` if it ever leaks).
+**If the match went to penalties**
+- Exact draw score **and** correct qualifier → 10
+- Inexact draw, correct qualifier → `7 + 1.5 / |predicted − actual|` (8.5 → 7)
+- Predicted a winner whose team then advanced on penalties → configurable (e.g. 4)
+- Exact draw score, wrong qualifier → 8.5
+- Inexact draw, wrong qualifier → `5.5 + 1.5 / |predicted − actual|` (7 → 5.5)
+- One team's goals correct → 1
 
-### 4. Get a football API key (free) — for kickoff deadlines
-1. Register at <https://www.football-data.org/client/register> (name + email, free tier).
-2. They **email you the API token** in ~1 minute (check spam) — that's your
-   `FOOTBALL_API_KEY`. The free tier covers the World Cup.
-3. Optional: leave it blank to disable deadlines (matches then lock only when a
-   result is entered).
+**If it was decided in regulation** — the group-stage-style winner/score scoring,
+plus a small reward for predicting a draw but naming the eventual winner.
 
-### 5. Configure
-```bash
-cp .env.example .env
-# edit .env: TELEGRAM_BOT_TOKEN, FOOTBALL_API_KEY, GOOGLE_SHEET_ID, ADMIN_IDS
-```
-Get your own Telegram id by running the bot and sending `/whoami`; put it in
-`ADMIN_IDS`.
+Each round then multiplies the result: **Round-of-32 ×1.2, Round-of-16 ×1.4,
+Quarter ×1.6, Semi ×1.8, Third-place ×1.9, Final ×2.0** (per-league configurable).
 
-### 6. Install & run
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python3 main.py
-```
+### Special predictions
 
-## Linking players to names (admin)
+Champion, best player and top scorer are text predictions with their own points
+and **time-based deadlines**:
+- Best player & top scorer **hard-close** at a deadline.
+- The **champion** is a two-cell prediction: lock it in early and leave it
+  unchanged for a **+bonus** if correct; you may still change it later (up to the
+  knockout stage) but forfeit the bonus (the pre-deadline pick lives in cell 1,
+  later changes in cell 2).
+- One-off **challenges** (e.g. "who will make the boldest predictions") can be
+  added per-league via an env variable, each with its own label, points and
+  deadline.
 
-Telegram bots **cannot list the members of a channel/group** (the Bot API
-forbids it), so players are linked manually — once each:
+Results are auto-filled from the [football-data.org](https://football-data.org)
+API after each match (kickoff times too, so predictions lock at kickoff). For a
+penalty shootout the bot writes the **regulation draw** to the score row and the
+**qualifier** to the penalty row — never the shootout aggregate.
 
-1. Each player opens the bot and sends `/whoami`; they send you their `id`.
-2. You run `/slots` to see the numbered list of names, then
-   `/assign <idx> <telegram_id>` (e.g. `/assign 11 123456789` links that user to
-   *Yoosof*). Slots are keyed by number, so the two players named *Sina* are
-   never confused.
-3. `/assignments` lists everyone linked; `/unassign <telegram_id>` removes one.
+---
 
-## Player commands
+## The bot, button by button
 
-| Command | Action |
+Tap **/start** once to get the persistent menu.
+
+**Everyone**
+- **🎯 Predict a match** — opens a paginated list of open matches (4 per page,
+  Next/Prev). Tapping a match opens the **score stepper**: `➖ / ➕` under each
+  team and **✅ Save** / **✖️ Cancel**. The running score lives in the button
+  data, so `+/-` taps never hit the network — only Save writes to the sheet.
+  For a knockout match you predict as a draw, Save is followed by two buttons to
+  pick the **penalty winner**.
+- **🏆 Special prediction** — lists the currently-open specials (champion, best
+  player, top scorer, any active challenge), each showing **its own deadline**.
+  Pick one and send your answer as text.
+- **📋 My predictions** — your picks with the real result and points earned. Shows
+  the **last 10** matches by default, with a **📄 Show all** button that opens a
+  paginated view (10/page, Prev/Next) and a **🔙 Back** button. Knockout draws
+  also show your penalty pick ("Argentina 1 - 1 Brazil — Argentina on penalties").
+- **📅 Fixtures** — the schedule with kickoff times (Shamsi + Gregorian) and
+  results.
+- **🆔 Who am I?** — shows your Telegram id so the admin can link you.
+- **❓ Help** — the first-time guide.
+
+**Admin-only** (extra rows appear for admins)
+- **📊 Leaderboard** — private standings (others' scores are hidden from players).
+- **📢 Broadcast** — send a message to every linked player's private chat.
+- **📨 Post to group** — post a message into the registered group as the bot.
+- **📤 Send table / 📤 Send predictions** — push the leaderboard or a match's
+  predictions to wherever you run it.
+- **⚙️ Auto results** — toggle the automatic post-match leaderboard.
+- **📜 Prediction log** — download the full append-only audit log of every pick.
+- **🏅 Yesterday's top gainers** — post (and re-post on demand) the daily
+  "who scored the most yesterday" call-out that tags the top N and asks them to
+  analyse today's games.
+- Commands: `/slots`, `/assign <idx> <id>`, `/unassign <id>`, `/assignments`,
+  `/setgroup`, `/synckickoffs`, `/syncresults`, `/sendgroup`, `/topgainers`.
+
+### Automatic jobs
+
+- Kickoff-time sync and result sync from the API (results auto-fill the sheet).
+- **Reminders** to each player who hasn't predicted a match yet — 24h / 3h / 1h
+  before kickoff — plus a special-deadline reminder (24h / 1h). All predictions
+  are read in **one bulk call** to stay under the Sheets read-quota.
+- Group posts: everyone's predictions when a match kicks off, and the leaderboard
+  when it finishes (optionally into a specific forum topic).
+- A daily 9am fixtures post + the top-gainers call-out.
+
+---
+
+## Architecture
+
+| File | Role |
 |---|---|
-| `/predict` | Pick an open match, set the score with ➖/➕ buttons, tap **Save** |
-| `/special` | Predict Champion / Man of the Cup / Top Scorer |
-| `/mypredictions` | Review your picks (and actual results) |
-| `/leaderboard` | Live standings (totals straight from the sheet) |
-| `/matches` | Fixtures and results |
-| `/whoami` | Your Telegram id and linked name |
+| `main.py` | Builds the Telegram app, registers handlers, schedules the jobs. |
+| `bot.py` | All handlers, buttons, jobs and the (RTL-aware) message text. |
+| `sheet.py` | `SheetClient` (gspread): matches, specials, predictions, results/kickoff sync, standings. Wraps calls with **retry-on-429**. |
+| `store.py` | Local JSON: user→column assignments, reminder de-dup, the group/announce state, and an append-only prediction log. |
+| `config.py` | All settings, most env-overridable (row ranges, kickoff column, deadlines, bonus rows, extra specials). |
+| `api_client.py` | football-data.org client (kickoffs + results, incl. penalty shootouts) with team-name normalisation. |
+| `teams_fa.py` | Team-name display map. |
 
-### Score entry UI
+**Two leagues, one codebase.** Two git branches deploy to two service instances;
+`config.py` is identical and every per-league difference (sheet id, token,
+timezone, row layout, bonus rows, extra specials) lives in each instance's
+`.env`. Secrets (`.env`, `service_account.json`) never enter git.
 
-`/predict` lists the open matches; tapping one opens an in-place **score stepper**:
+Right-to-left text is kept stable next to Latin names/numbers with Unicode
+isolates, and dates are shown in both the Jalali (Shamsi) and Gregorian calendars.
 
-```
-⚽ England – Croatia
-Set your score, then Save.
-┌──────────────────────────────┐
-│  ➖   England:  2    ➕       │
-│  ➖   Croatia:  1    ➕       │
-│  ✅ Save        ✖️ Cancel    │
-└──────────────────────────────┘
-```
+---
 
-The ➖/➕ taps update the same message instantly (no network), and only **Save**
-writes to the sheet. If you already predicted that match, it opens pre-filled so
-you can adjust it.
+## Setup
 
-## Prediction deadlines (lock at kickoff)
+1. Create a Telegram bot with [@BotFather](https://t.me/botfather) and get its token.
+2. Create a Google Cloud service account, download `service_account.json`, and
+   share your scoring Google Sheet with the service-account email as **Editor**.
+3. Copy `.env.example` to `.env` and fill in: `TELEGRAM_BOT_TOKEN`,
+   `GOOGLE_SHEET_ID`, `ADMIN_IDS`, `FOOTBALL_API_KEY`, and any layout overrides.
+4. Install and run:
+   ```bash
+   pip install -r requirements.txt
+   python main.py
+   ```
+5. In your group, run `/setgroup` (inside the target forum topic if you use one),
+   then `/slots` and `/assign <idx> <telegram_id>` to link people to sheet columns.
 
-A match stops accepting predictions **at kickoff**, not when you enter the result.
-Kickoff times come from the football API (the same `FOOTBALL_API_KEY` the original
-bot used). A background job fetches them every few hours and writes each match's
-kickoff into column **BV** of the sheet; the bot then enforces the lock by reading
-that column.
+Only **one** process may run per bot token (a second one causes a 409 conflict).
 
-- Set `FOOTBALL_API_KEY` in `.env` to enable this. Leave it blank and matches lock
-  only when you enter a result (no time deadline).
-- The API only ever **fills empty** BV cells, so you can **hand-edit any BV cell to
-  override** a wrong/missing time — your value is never overwritten.
-- Admin command `/synckickoffs` runs the sync on demand and reports any fixtures it
-  couldn't name-match (set those kickoff cells manually).
-- Lock logic always compares in **UTC**; `DISPLAY_TZ` only affects how times are
-  shown to players (e.g. `Asia/Tehran`).
+---
 
-## Admin commands
+## Tech
 
-| Command | Action |
-|---|---|
-| `/slots` | Numbered list of the 20 names and who's linked |
-| `/assign <idx> <id>` | Link a Telegram id to a slot |
-| `/unassign <id>` | Remove a link |
-| `/assignments` | List all links |
-| `/synckickoffs` | Fetch kickoff times now; report unmatched fixtures |
-
-## Notes
-- The bot **never** writes a formula/points column, so your scoring can't be
-  corrupted. It writes only `predicted_home` / `predicted_away` (or one text cell
-  for specials), plus the kickoff column BV.
-- Predictions can be changed until kickoff (or until a result is entered).
-- New fixtures appear automatically once you fill columns A/B for more rows.
-- `assignments.json`, `service_account.json`, and `.env` are git-ignored.
+python-telegram-bot 21 (long polling, JobQueue, inline + reply keyboards) ·
+gspread + Google service account · football-data.org · jdatetime (Jalali dates).
