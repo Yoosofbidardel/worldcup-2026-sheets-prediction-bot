@@ -48,6 +48,15 @@ def main():
             first=20,
         )
         logging.info("Results sync scheduled every %.1f h.", RESULTS_REFRESH_HOURS)
+
+        # Once a day (and shortly after startup): pull the next knockout round's
+        # fixtures into the sheet as soon as its teams are decided.
+        app.job_queue.run_repeating(
+            bot.refresh_knockout_job,
+            interval=24 * 3600,
+            first=35,
+        )
+        logging.info("Knockout fixtures sync scheduled daily.")
     else:
         logging.warning("FOOTBALL_API_KEY not set — kickoff deadlines & result sync disabled.")
 

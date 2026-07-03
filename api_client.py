@@ -10,7 +10,7 @@ import unicodedata
 
 import requests
 
-from config import COMPETITION_CODE, FOOTBALL_API_BASE, FOOTBALL_API_KEY
+from config import COMPETITION_CODE, FOOTBALL_API_BASE, FOOTBALL_API_KEY, KNOCKOUT_ROUNDS
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +124,43 @@ def fetch_results() -> dict:
         if home and away and h is not None and a is not None:
             out[(canon(home), canon(away))] = {"home": h, "away": a, "pen": pen}
     logger.info("Fetched %d finished results from the API.", len(out))
+    return out
+
+
+def fetch_knockout() -> dict:
+    """Return {stage: [{'home','away','utc'}, ...]} for the knockout rounds, each
+    list sorted by kickoff so the Nth match always maps to the same sheet row.
+
+    Matches whose teams aren't decided yet are still included (with home/away =
+    None) so the date-ordering — and therefore the row each slot maps to — stays
+    stable; the sheet sync just skips filling teams until they're known.
+    Returns {} on any error.
+    """
+    if not FOOTBALL_API_KEY or not KNOCKOUT_ROUNDS:
+        return {}
+    url = f"{FOOTBALL_API_BASE}/competitions/{COMPETITION_CODE}/matches"
+    try:
+        resp = requests.get(url, headers={"X-Auth-Token": FOOTBALL_API_KEY}, timeout=15)
+        resp.raise_for_status()
+        matches = resp.json().get("matches", [])
+    except Exception as e:
+        logger.error("Failed to fetch knockout fixtures: %s", e)
+        return {}
+
+    out = {stage: [] for stage in KNOCKOUT_ROUNDS}
+    for m in matches:
+        stage = m.get("stage")
+        if stage not in out:
+            continue
+        out[stage].append(
+            {
+                "home": (m.get("homeTeam") or {}).get("name"),
+                "away": (m.get("awayTeam") or {}).get("name"),
+                "utc": m.get("utcDate"),
+            }
+        )
+    for stage in out:
+        out[stage].sort(key=lambda x: x["utc"] or "")
     return out
 
 

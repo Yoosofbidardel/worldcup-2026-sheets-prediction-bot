@@ -61,6 +61,27 @@ MATCH_LAST_ROW = int(os.getenv("MATCH_LAST_ROW", "69"))
 KNOCKOUT_FIRST_ROW = int(os.getenv("KNOCKOUT_FIRST_ROW", "75"))
 KNOCKOUT_LAST_ROW = int(os.getenv("KNOCKOUT_LAST_ROW", "138"))
 
+# Knockout rounds, keyed by the API's stage name -> (first score row, match count).
+# Derived from KNOCKOUT_FIRST_ROW assuming the standard 32-team bracket laid out
+# in PAIRED rows (2 rows per match). Used by the daily job that fills each round's
+# fixtures from the API as soon as its teams are decided. Round sizes are fixed;
+# only the starting row moves if the group stage grows.
+def _knockout_rounds(first: int) -> dict:
+    rounds, r = {}, first
+    for stage, n in (
+        ("LAST_32", 16),
+        ("LAST_16", 8),
+        ("QUARTER_FINALS", 4),
+        ("SEMI_FINALS", 2),
+        ("THIRD_PLACE", 1),
+        ("FINAL", 1),
+    ):
+        rounds[stage] = (r, n)
+        r += 2 * n
+    return rounds
+
+KNOCKOUT_ROUNDS = _knockout_rounds(KNOCKOUT_FIRST_ROW) if KNOCKOUT_FIRST_ROW else {}
+
 # Column that stores each match's kickoff time (ISO-8601 UTC). It MUST sit past
 # every prediction block (and the ROBOT block), otherwise it collides with a
 # player's column. Default 74 (col BV) suits ~20 players; override per-deployment
