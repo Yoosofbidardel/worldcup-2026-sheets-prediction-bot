@@ -1098,6 +1098,43 @@ async def cmd_synckickoffs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _say(update, msg)
 
 
+# ── Knockout fixtures sync (API → sheet, as each round's teams are decided) ─
+async def _sync_knockout(context) -> dict:
+    km = await asyncio.to_thread(api_client.fetch_knockout)
+    if not km:
+        return {"teams": 0, "kickoffs": 0, "added": []}
+    return await asyncio.to_thread(_sheet(context).sync_knockout_teams, km)
+
+
+async def refresh_knockout_job(context: ContextTypes.DEFAULT_TYPE):
+    """Once-a-day background fill of newly-decided knockout fixtures into the
+    sheet (teams + kickoff), so a fresh round appears in the bot on its own."""
+    report = await _sync_knockout(context)
+    if report["teams"] or report["kickoffs"]:
+        logging.info(
+            "Knockout sync: added %d matchup(s), %d kickoff(s): %s",
+            report["teams"], report["kickoffs"], "; ".join(report["added"]),
+        )
+
+
+async def cmd_syncknockout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update.effective_user.id):
+        return
+    await _say(update, "⏳🔄 د وایسا بازی‌های تازه‌ی مرحله‌ی حذفی رو از API بیارم…")
+    report = await _sync_knockout(context)
+    if not report["teams"] and not report["kickoffs"]:
+        await _say(update, "🤷 د بازی تازه‌ای نبود که اضاف کنم (تیمای دور بعد هنوز معلوم نشده‌ن).")
+        return
+    shown = "\n".join(
+        f"  • {_team(x.split(' – ')[0])} 🆚 {_team(x.split(' – ')[-1])}" for x in report["added"][:25]
+    )
+    await _say(
+        update,
+        f"✅ د *{_fa_num(report['teams'])}* بازی تازه اضاف شد و *{_fa_num(report['kickoffs'])}* تا زمون شروع نوشته شد ها. ⚽️"
+        + (f"\n{shown}" if shown else ""),
+    )
+
+
 # ── Results sync (API → sheet, after matches finish) ─────────────────────
 async def _sync_results(context) -> dict:
     results = await asyncio.to_thread(api_client.fetch_results)
@@ -1636,6 +1673,7 @@ def register(app: Application):
     app.add_handler(CommandHandler("autoresults", cmd_toggle_auto))
     app.add_handler(CommandHandler("predlog", cmd_predlog))
     app.add_handler(CommandHandler("synckickoffs", cmd_synckickoffs))
+    app.add_handler(CommandHandler("syncknockout", cmd_syncknockout))
     app.add_handler(CommandHandler("syncresults", cmd_syncresults))
     # interactive
     app.add_handler(CallbackQueryHandler(send_preds_choice, pattern=r"^spsend:\d+$"))

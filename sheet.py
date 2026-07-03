@@ -46,6 +46,7 @@ from config import (
     FIRST_SLOT_COL,
     KNOCKOUT_FIRST_ROW,
     KNOCKOUT_LAST_ROW,
+    KNOCKOUT_ROUNDS,
     GOOGLE_CREDENTIALS_FILE,
     GOOGLE_SHEET_ID,
     KICKOFF_COL,
@@ -511,6 +512,61 @@ class SheetClient:
             elif kickoff_map:
                 unmatched.append(f"{m['home']} – {m['away']}")
         return {"written": written, "unmatched": unmatched}
+
+    def sync_knockout_teams(self, knockout_map: dict) -> dict:
+        """Fill each knockout round's fixtures from fetch_knockout()'s
+        {stage: [{'home','away','utc'}, ...]} (already date-sorted).
+
+        The Nth match of a stage maps to a fixed paired-row block, so a slot
+        keeps its row even before its teams are known. Only writes cells that are
+        currently BLANK, so manual corrections (e.g. a hand-fixed matchup) and
+        already-filled rounds are never clobbered. Returns a small report.
+        """
+        if not KNOCKOUT_ROUNDS or not knockout_map:
+            return {"teams": 0, "kickoffs": 0, "added": []}
+        kcol = rowcol_to_a1(1, KICKOFF_COL)[:-1]
+        rows = [
+            r
+            for start, count in KNOCKOUT_ROUNDS.values()
+            for r in range(start, start + 2 * count, 2)
+        ]
+        lo, hi = min(rows), max(rows)
+        with self._lock:
+            ab = self._ws.get(f"A{lo}:B{hi}", value_render_option="UNFORMATTED_VALUE")
+            kk = self._ws.get(
+                f"{kcol}{lo}:{kcol}{hi}", value_render_option="UNFORMATTED_VALUE"
+            )
+
+        def _cell(block, row, col):
+            i = row - lo
+            if 0 <= i < len(block) and col < len(block[i]):
+                return block[i][col]
+            return None
+
+        writes, added, nk = [], [], 0
+        for stage, (start, count) in KNOCKOUT_ROUNDS.items():
+            for i, mt in enumerate(knockout_map.get(stage, [])[:count]):
+                row = start + 2 * i
+                home, away, utc = mt.get("home"), mt.get("away"), mt.get("utc")
+                if home and away:
+                    a_blank = _blank(_cell(ab, row, 0))
+                    b_blank = _blank(_cell(ab, row, 1))
+                    if a_blank:
+                        writes.append((f"A{row}", home))
+                    if b_blank:
+                        writes.append((f"B{row}", away))
+                    if a_blank or b_blank:
+                        added.append(f"{home} – {away}")
+                if utc and _blank(_cell(kk, row, 0)):
+                    writes.append((rowcol_to_a1(row, KICKOFF_COL), utc))
+                    nk += 1
+        if writes:
+            with self._lock:
+                self._ws.batch_update(
+                    [{"range": r, "values": [[v]]} for r, v in writes],
+                    value_input_option="USER_ENTERED",
+                )
+        return {"teams": len(added), "kickoffs": nk, "added": added}
 
     # ── Results (auto-filled from the API after a match finishes) ────────
     def sync_results(self, results_map: dict) -> dict:
